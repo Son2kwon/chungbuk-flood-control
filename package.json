@@ -1,0 +1,15 @@
+{
+  "name": "chungbuk-flood-control",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "test:domain": "npm run test --workspace=@chungbuk/domain",
+    "test:data": "npm run test --workspace=@chungbuk/data",
+    "dev:web": "npm run dev --workspace=@chungbuk/web",
+    "build:web": "npm run build --workspace=@chungbuk/web"
+  }
+}

@@ -1,0 +1,283 @@
+import type { AlertState, ControlOrderEngine, Severity, StateTransitionEvent } from "@chungbuk/domain";
+import { OSONG_INCIDENT_TIMELINE, type IncidentTimelineEntry, type SiteType } from "@chungbuk/data";
+import { createCompositionRoot, type CompositionRoot } from "./composition-root";
+import { buildNotification, type NotificationRecord } from "./notifications";
+
+export const SPEED_OPTIONS = [1, 60, 600] as const;
+export type SpeedOption = (typeof SPEED_OPTIONS)[number];
+
+/** 이 프로토타입에는 로그인/사용자 선택 UI가 없다 — 모든 수동 조작은 이 배우 이름으로 기록된다. */
+const DEMO_ACTOR = "상황실 운영자";
+const FIELD_ACTOR = "현장 대응팀";
+
+export interface SiteSnapshot {
+  id: string;
+  name: string;
+  type: SiteType;
+  lat: number;
+  lng: number;
+  gaugeId: string;
+  state: AlertState;
+  severity: Severity | null;
+  currentLevel: number | null;
+  interpolated: boolean;
+  watchLevel: number;
+  alertLevel: number;
+  ladder: readonly string[];
+  ladderStep: number;
+  assignedRole: string | null;
+  alertId: string | null;
+  deadlineAt: Date | null;
+  remainingMs: number | null;
+  /** 현재 배정(alertId) 건에 대해 "현장 도착" 보고가 있었는지. 도메인 상태가 아니라 현장 화면 전용 UI 표시다. */
+  arrivedOnSite: boolean;
+}
+
+export interface SimulationSnapshot {
+  now: Date;
+  seedStart: Date;
+  seedEnd: Date;
+  isPlaying: boolean;
+  isFinished: boolean;
+  speed: SpeedOption;
+  sites: SiteSnapshot[];
+  selectedSiteId: string;
+  reachedIncidents: IncidentTimelineEntry[];
+  errorMessage: string | null;
+  /** 전체 이벤트 로그 (감사 로그 화면용). 시간순이 아닐 수 있어 화면에서 정렬해 쓴다. */
+  events: readonly StateTransitionEvent[];
+  /** alertId → 지점명. events에는 지점명이 없어 화면에서 조인할 때 쓴다. */
+  siteNameByAlertId: Readonly<Record<string, string>>;
+  notifications: readonly NotificationRecord[];
+}
+
+type Listener = () => void;
+
+export class SimulationStore {
+  private root: CompositionRoot;
+  private isPlaying = false;
+  private lastFrameAt: Date | null = null;
+  private selectedSiteId: string;
+  private dismissedIncidents = new Set<string>();
+  private errorMessage: string | null = null;
+  private listeners = new Set<Listener>();
+  private snapshot: SimulationSnapshot;
+  private arrivedAlertIds = new Set<string>();
+  private alertIdToSiteName = new Map<string, string>();
+  private notifications: NotificationRecord[] = [];
+  private notificationSeq = 0;
+
+  constructor() {
+    this.root = createCompositionRoot();
+    this.selectedSiteId = this.root.sites[0]!.id;
+    this.snapshot = this.buildSnapshot();
+  }
+
+  getSnapshot = (): SimulationSnapshot => this.snapshot;
+
+  subscribe = (listener: Listener): (() => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  };
+
+  private notify(): void {
+    this.snapshot = this.buildSnapshot();
+    for (const listener of this.listeners) listener();
+  }
+
+  private buildSnapshot(): SimulationSnapshot {
+    const now = this.root.replayClock.now();
+    const sites: SiteSnapshot[] = this.root.sites.map((site) => {
+      const engine = this.root.engines.get(site.id)!;
+      const config = this.root.siteConfigs.get(site.id)!;
+      const deadlineAt = engine.deadlineAt;
+      const alertId = engine.alertId;
+
+      // 지금까지 등장한 모든 alertId를 지점명에 매핑해 둔다 — 감사 로그가 지나간 이벤트도
+      // 지점명으로 보여줘야 하므로, alertId가 사라진(RELEASE 이후) 뒤에도 남아 있어야 한다.
+      if (alertId) this.alertIdToSiteName.set(alertId, site.name);
+
+      return {
+        id: site.id,
+        name: site.name,
+        type: site.type,
+        lat: site.lat,
+        lng: site.lng,
+        gaugeId: site.gaugeId,
+        state: engine.state,
+        severity: engine.severity,
+        currentLevel: engine.lastReading?.value ?? null,
+        interpolated: engine.lastReading?.interpolated ?? false,
+        watchLevel: config.watchLevel,
+        alertLevel: config.alertLevel,
+        ladder: config.ladder,
+        ladderStep: engine.ladderStep,
+        assignedRole: config.ladder[engine.ladderStep] ?? null,
+        alertId,
+        deadlineAt,
+        remainingMs: deadlineAt ? deadlineAt.getTime() - now.getTime() : null,
+        arrivedOnSite: alertId ? this.arrivedAlertIds.has(alertId) : false,
+      };
+    });
+
+    return {
+      now,
+      seedStart: this.root.seedStart,
+      seedEnd: this.root.seedEnd,
+      isPlaying: this.isPlaying,
+      isFinished: now.getTime() >= this.root.seedEnd.getTime(),
+      speed: this.root.replayClock.speed as SpeedOption,
+      sites,
+      selectedSiteId: this.selectedSiteId,
+      reachedIncidents: OSONG_INCIDENT_TIMELINE.filter(
+        (entry) => entry.at.getTime() <= now.getTime() && !this.dismissedIncidents.has(entry.label),
+      ),
+      errorMessage: this.errorMessage,
+      events: this.root.eventLog.all(),
+      siteNameByAlertId: Object.fromEntries(this.alertIdToSiteName),
+      notifications: [...this.notifications],
+    };
+  }
+
+  /** 합성 루트의 liveClock으로 실제 경과 시간을 재서 가상 시각을 전진시킨다. rAF 루프에서 매 프레임 호출한다. */
+  tickIfPlaying = (): void => {
+    if (!this.isPlaying) return;
+
+    const realNow = this.root.liveClock.now();
+    if (this.lastFrameAt === null) {
+      this.lastFrameAt = realNow;
+      return;
+    }
+    const deltaMs = realNow.getTime() - this.lastFrameAt.getTime();
+    this.lastFrameAt = realNow;
+    if (deltaMs <= 0) return;
+
+    const remainingVirtualMs = this.root.seedEnd.getTime() - this.root.replayClock.now().getTime();
+    if (remainingVirtualMs <= 0) {
+      this.isPlaying = false;
+      this.notify();
+      return;
+    }
+
+    const speed = this.root.replayClock.speed;
+    const maxRealMs = remainingVirtualMs / speed;
+    const applyRealMs = Math.min(deltaMs, maxRealMs);
+    this.root.replayClock.tick(applyRealMs);
+    if (this.root.replayClock.now().getTime() >= this.root.seedEnd.getTime()) {
+      this.isPlaying = false;
+    }
+    this.notify();
+  };
+
+  play = (): void => {
+    if (this.snapshot.isFinished) return;
+    this.isPlaying = true;
+    this.lastFrameAt = null;
+    this.notify();
+  };
+
+  pause = (): void => {
+    this.isPlaying = false;
+    this.lastFrameAt = null;
+    this.notify();
+  };
+
+  reset = (): void => {
+    this.root = createCompositionRoot();
+    this.isPlaying = false;
+    this.lastFrameAt = null;
+    this.selectedSiteId = this.root.sites[0]!.id;
+    this.dismissedIncidents.clear();
+    this.errorMessage = null;
+    this.arrivedAlertIds.clear();
+    this.alertIdToSiteName.clear();
+    this.notifications = [];
+    this.notificationSeq = 0;
+    this.notify();
+  };
+
+  /** 앞으로만 이동할 수 있다 — 되돌리기는 초기화(reset)로만 가능하다 (도메인의 단조 시간 불변식). */
+  seek = (target: Date): void => {
+    const now = this.root.replayClock.now();
+    if (target.getTime() <= now.getTime()) return;
+    const clamped = new Date(Math.min(target.getTime(), this.root.seedEnd.getTime()));
+    this.root.replayClock.seek(clamped);
+    if (this.root.replayClock.now().getTime() >= this.root.seedEnd.getTime()) {
+      this.isPlaying = false;
+    }
+    this.notify();
+  };
+
+  setSpeed = (speed: SpeedOption): void => {
+    this.root.replayClock.setSpeed(speed);
+    this.notify();
+  };
+
+  selectSite = (siteId: string): void => {
+    this.selectedSiteId = siteId;
+    this.notify();
+  };
+
+  dismissIncident = (label: string): void => {
+    this.dismissedIncidents.add(label);
+    this.notify();
+  };
+
+  /** 승인은 통제 권고를 APPROVED로 전이시키는 동시에, 그 시점에 주민 알림을 자동 생성한다(mock). */
+  approve = (siteId: string): void => {
+    const engine = this.root.engines.get(siteId);
+    const site = this.root.sites.find((s) => s.id === siteId);
+    if (!engine || !site) return;
+    try {
+      const now = this.root.replayClock.now();
+      engine.approve(DEMO_ACTOR, now);
+      this.notifications.push(buildNotification(site, now, this.notificationSeq++));
+      this.errorMessage = null;
+    } catch (error) {
+      this.errorMessage = error instanceof Error ? error.message : String(error);
+    }
+    this.notify();
+  };
+
+  reject = (siteId: string, reason: string): void => {
+    this.runAction(siteId, (engine, now) => engine.reject(DEMO_ACTOR, reason, now));
+  };
+
+  /** 현장 대응팀의 완료 보고. 상황실 화면과 /field 화면 양쪽에서 호출될 수 있다. */
+  reportFieldComplete = (siteId: string): void => {
+    this.runAction(siteId, (engine, now) => engine.reportFieldComplete(FIELD_ACTOR, now));
+  };
+
+  approveRelease = (siteId: string): void => {
+    this.runAction(siteId, (engine, now) => engine.approveRelease(DEMO_ACTOR, now));
+  };
+
+  /** "현장 도착" — 도메인 상태를 바꾸지 않는 현장 화면 전용 표시. 도메인에 기록되지 않는다. */
+  markArrived = (siteId: string): void => {
+    const engine = this.root.engines.get(siteId);
+    const alertId = engine?.alertId;
+    if (!alertId) return;
+    this.arrivedAlertIds.add(alertId);
+    this.notify();
+  };
+
+  private runAction(siteId: string, action: (engine: ControlOrderEngine, now: Date) => void): void {
+    const engine = this.root.engines.get(siteId);
+    if (!engine) return;
+    try {
+      action(engine, this.root.replayClock.now());
+      this.errorMessage = null;
+    } catch (error) {
+      this.errorMessage = error instanceof Error ? error.message : String(error);
+    }
+    this.notify();
+  }
+
+  getGaugeSource() {
+    return this.root.gaugeSource;
+  }
+}
+
+export function createSimulationStore(): SimulationStore {
+  return new SimulationStore();
+}
