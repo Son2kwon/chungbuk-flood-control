@@ -8,21 +8,28 @@ import {
 } from "@chungbuk/domain";
 import { createChungbukReplayGaugeSource, SITES } from "@chungbuk/data";
 import { buildSiteConfig, SEED_START } from "./composition-root";
+import { formatShortClock } from "./format";
 
 const SITE_ID = "gungpyeong2-underpass";
-const FLOOD_AT = new Date("2023-07-15T08:30:00Z");
+/** 실제 유입 시각(국무조정실 발표). 시나리오 A/B 최종 상태를 이 시점 기준으로 대비시킨다. */
+const FLOOD_AT = new Date("2023-07-15T08:27:00Z");
 
-// Stage 1 테스트의 시나리오 B와 동일한 타이밍: T1(SEVERE)=5분 만료 직전에 승인, 06:50에 완료 보고.
-const APPROVE_AFTER_MS = 5 * 60_000 - 1;
-const COMPLETE_AFTER_APPROVE_MS = 1 + 15 * 60_000;
+// packages/domain/test/mihocheongyo.test.ts 시나리오 B와 동일한 타이밍.
+// 06:30 ALERT로 DIRECTED 직행(의무 통제라 승인 절차가 없다) → 06:35 수신 확인(타이머 불변) →
+// 06:40 DESIGN_FLOOD 승격(타이머 리셋) → T2(DESIGN_FLOOD)=10분 만료(06:50) 직전에 완료 보고.
+const ACKNOWLEDGE_AT = new Date("2023-07-15T06:35:00Z");
+const COMPLETE_AT = new Date("2023-07-15T06:49:59.999Z");
 
 export interface ScenarioResult {
   key: "A" | "B";
   label: string;
   description: string;
   events: StateTransitionEvent[];
-  stateAt0830: AlertState;
+  stateAtFloodTime: AlertState;
 }
+
+/** 두 시나리오 칼럼이 공통으로 표시하는 "실제 유입 시각" 라벨. */
+export const FLOOD_AT_LABEL = formatShortClock(FLOOD_AT);
 
 /**
  * 실시간 재생과 무관하게, 독립된 합성 루트로 결정론적으로 시나리오를 끝까지 돌린다.
@@ -42,9 +49,9 @@ function runScenario(respond: boolean): ScenarioResult {
   engine.attach(clock);
 
   if (respond) {
-    clock.tick(APPROVE_AFTER_MS);
-    engine.approve("당직자", clock.now());
-    clock.tick(COMPLETE_AFTER_APPROVE_MS);
+    clock.seek(ACKNOWLEDGE_AT);
+    engine.acknowledge("당직자", clock.now());
+    clock.seek(COMPLETE_AT);
     engine.reportFieldComplete("현장 대응팀", clock.now());
   }
 
@@ -54,16 +61,16 @@ function runScenario(respond: boolean): ScenarioResult {
     ? {
         key: "B",
         label: "시나리오 B · 대응",
-        description: "06:35 승인, 06:50 현장완료 보고",
+        description: "06:35 수신 확인, 06:49 현장완료 보고",
         events: [...eventLog.all()],
-        stateAt0830: engine.state,
+        stateAtFloodTime: engine.state,
       }
     : {
         key: "A",
         label: "시나리오 A · 무응답",
         description: "아무도 응답하지 않음",
         events: [...eventLog.all()],
-        stateAt0830: engine.state,
+        stateAtFloodTime: engine.state,
       };
 }
 

@@ -36,6 +36,7 @@ export function buildSiteConfig(site: SiteSeed): SiteConfig {
     gaugeId: site.gaugeId,
     watchLevel: gauge.warnLevel,
     alertLevel: gauge.alertLevel,
+    designFloodLevel: gauge.designFloodLevel,
     ladder: resolveLadder(site.escalationGroupId),
   };
 }

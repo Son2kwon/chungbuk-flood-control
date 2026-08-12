@@ -4,12 +4,12 @@ import type { StateTransitionEvent } from "@chungbuk/domain";
 import { useSimulation } from "../../lib/useSimulation";
 import { formatClock, formatCountdown } from "../../lib/format";
 
-/** 이 배정(alertId) 건이 APPROVED로 (재)들어온 가장 최근 시각 — "배정 시각"으로 보여준다. */
+/** 이 배정(alertId) 건이 DIRECTED로 (재)들어온 가장 최근 시각 — "배정 시각"으로 보여준다. */
 function findAssignedAt(events: readonly StateTransitionEvent[], alertId: string | null): Date | null {
   if (!alertId) return null;
   let latest: Date | null = null;
   for (const e of events) {
-    if (e.alertId !== alertId || e.toState !== "APPROVED") continue;
+    if (e.alertId !== alertId || e.toState !== "DIRECTED") continue;
     if (!latest || e.occurredAt.getTime() > latest.getTime()) latest = e.occurredAt;
   }
   return latest;
@@ -17,7 +17,7 @@ function findAssignedAt(events: readonly StateTransitionEvent[], alertId: string
 
 export default function FieldPage() {
   const { snapshot, store } = useSimulation();
-  const assigned = snapshot.sites.filter((s) => s.state === "APPROVED");
+  const assigned = snapshot.sites.filter((s) => s.state === "DIRECTED");
 
   return (
     <div className="app-page field-page">

@@ -5,7 +5,7 @@ import type { SimulationSnapshot, SimulationStore } from "../lib/simulationStore
 import { ActiveOrderCard } from "./ActiveOrderCard";
 import { RejectModal } from "./RejectModal";
 
-const ACTIVE_STATES = new Set(["RECOMMENDED", "APPROVED", "RELEASE_PENDING", "FORCED"]);
+const ACTIVE_STATES = new Set(["RECOMMENDED", "DIRECTED", "RELEASE_PENDING", "FORCED"]);
 
 interface ActiveOrdersPanelProps {
   snapshot: SimulationSnapshot;
@@ -33,6 +33,7 @@ export function ActiveOrdersPanel({ snapshot, store }: ActiveOrdersPanelProps) {
             onSelect={() => store.selectSite(site.id)}
             onApprove={() => store.approve(site.id)}
             onOpenReject={() => setRejectTargetSiteId(site.id)}
+            onAcknowledge={() => store.acknowledge(site.id)}
             onReportFieldComplete={() => store.reportFieldComplete(site.id)}
             onApproveRelease={() => store.approveRelease(site.id)}
           />

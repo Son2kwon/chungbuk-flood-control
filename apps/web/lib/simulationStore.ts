@@ -9,6 +9,8 @@ export type SpeedOption = (typeof SPEED_OPTIONS)[number];
 /** 이 프로토타입에는 로그인/사용자 선택 UI가 없다 — 모든 수동 조작은 이 배우 이름으로 기록된다. */
 const DEMO_ACTOR = "상황실 운영자";
 const FIELD_ACTOR = "현장 대응팀";
+/** ControlOrderEngine.acknowledge()가 기록하는 이벤트 reason과 정확히 일치해야 한다. */
+const ACKNOWLEDGE_REASON = "통제 지시 수신 확인";
 
 export interface SiteSnapshot {
   id: string;
@@ -31,6 +33,8 @@ export interface SiteSnapshot {
   remainingMs: number | null;
   /** 현재 배정(alertId) 건에 대해 "현장 도착" 보고가 있었는지. 도메인 상태가 아니라 현장 화면 전용 UI 표시다. */
   arrivedOnSite: boolean;
+  /** 현재 배정(alertId) 건에 대해 "통제 지시 수신 확인" 이벤트가 있었는지. 이벤트 로그에서 파생한다. */
+  acknowledged: boolean;
 }
 
 export interface SimulationSnapshot {
@@ -87,6 +91,7 @@ export class SimulationStore {
 
   private buildSnapshot(): SimulationSnapshot {
     const now = this.root.replayClock.now();
+    const allEvents = this.root.eventLog.all();
     const sites: SiteSnapshot[] = this.root.sites.map((site) => {
       const engine = this.root.engines.get(site.id)!;
       const config = this.root.siteConfigs.get(site.id)!;
@@ -96,6 +101,12 @@ export class SimulationStore {
       // 지금까지 등장한 모든 alertId를 지점명에 매핑해 둔다 — 감사 로그가 지나간 이벤트도
       // 지점명으로 보여줘야 하므로, alertId가 사라진(RELEASE 이후) 뒤에도 남아 있어야 한다.
       if (alertId) this.alertIdToSiteName.set(alertId, site.name);
+
+      // acknowledged는 UI 전용 플래그가 아니라 이벤트 로그에서 파생한다 — 도메인이 실제로
+      // 기록한 acknowledge() 이벤트가 있는지로 판정한다.
+      const acknowledged = alertId
+        ? allEvents.some((e) => e.alertId === alertId && e.reason === ACKNOWLEDGE_REASON)
+        : false;
 
       return {
         id: site.id,
@@ -117,6 +128,7 @@ export class SimulationStore {
         deadlineAt,
         remainingMs: deadlineAt ? deadlineAt.getTime() - now.getTime() : null,
         arrivedOnSite: alertId ? this.arrivedAlertIds.has(alertId) : false,
+        acknowledged,
       };
     });
 
@@ -133,7 +145,7 @@ export class SimulationStore {
         (entry) => entry.at.getTime() <= now.getTime() && !this.dismissedIncidents.has(entry.label),
       ),
       errorMessage: this.errorMessage,
-      events: this.root.eventLog.all(),
+      events: allEvents,
       siteNameByAlertId: Object.fromEntries(this.alertIdToSiteName),
       notifications: [...this.notifications],
     };
@@ -241,6 +253,17 @@ export class SimulationStore {
 
   reject = (siteId: string, reason: string): void => {
     this.runAction(siteId, (engine, now) => engine.reject(DEMO_ACTOR, reason, now));
+  };
+
+  /**
+   * DIRECTED 지시를 수신했다는 확인만 기록한다. 상태도, 타이머도 건드리지 않는다 —
+   * 확인 후에도 카운트다운은 계속 돌고, 조치가 없으면 그대로 에스컬레이션된다.
+   */
+  acknowledge = (siteId: string): void => {
+    const config = this.root.siteConfigs.get(siteId);
+    const engine = this.root.engines.get(siteId);
+    const actor = config && engine ? (config.ladder[engine.ladderStep] ?? DEMO_ACTOR) : DEMO_ACTOR;
+    this.runAction(siteId, (e, now) => e.acknowledge(actor, now));
   };
 
   /** 현장 대응팀의 완료 보고. 상황실 화면과 /field 화면 양쪽에서 호출될 수 있다. */

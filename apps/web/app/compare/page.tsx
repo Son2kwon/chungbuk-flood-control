@@ -1,13 +1,14 @@
 "use client";
 
 import { useMemo } from "react";
-import { computeScenarioComparison, type ScenarioResult } from "../../lib/scenarioComparison";
+import { computeScenarioComparison, FLOOD_AT_LABEL, type ScenarioResult } from "../../lib/scenarioComparison";
 import { useFullscreen } from "../../lib/useFullscreen";
 import { formatClock } from "../../lib/format";
 import { STATE_STYLES } from "../../lib/stateColors";
+import { StateDot } from "../../components/StateDot";
 
 function ScenarioColumn({ scenario }: { scenario: ScenarioResult }) {
-  const finalStyle = STATE_STYLES[scenario.stateAt0830];
+  const finalStyle = STATE_STYLES[scenario.stateAtFloodTime];
   return (
     <div className={`compare-column compare-column-${scenario.key}`}>
       <div className="compare-column-header">
@@ -33,9 +34,9 @@ function ScenarioColumn({ scenario }: { scenario: ScenarioResult }) {
       </ol>
 
       <div className="compare-final">
-        <span className="compare-final-label">08:30 궁평2지하차도 상태</span>
+        <span className="compare-final-label">{FLOOD_AT_LABEL} 궁평2지하차도 상태</span>
         <span className="compare-final-badge">
-          <span className="state-dot" style={{ background: `var(${finalStyle.var})`, width: 14, height: 14 }} />
+          <StateDot state={scenario.stateAtFloodTime} size={14} />
           {finalStyle.label}
         </span>
       </div>

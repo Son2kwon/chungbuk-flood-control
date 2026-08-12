@@ -7,6 +7,18 @@ import { useFullscreen } from "../../lib/useFullscreen";
 import { formatClock, formatDate } from "../../lib/format";
 import { STATE_STYLES } from "../../lib/stateColors";
 
+/** ControlOrderEngine.acknowledge()가 기록하는 이벤트 reason과 정확히 일치해야 한다. */
+const ACKNOWLEDGE_REASON = "통제 지시 수신 확인";
+
+/** ControlOrderEngine.forceActions()의 metadata.forcedAction 코드명 — CLAUDE.md에 고정돼 있다. */
+const FORCED_ACTION_LABEL: Record<string, string> = {
+  ENTRY_BAN_NOTICE: "진입 금지 알림",
+  ADJACENT_SITE_ALERT: "인접 시설 확산 알림",
+  PROVINCIAL_REPORT: "도 대책본부 보고",
+};
+
+type AckStatus = "미확인" | "확인했으나 미조치";
+
 type TimelineRow =
   | {
       kind: "event";
@@ -17,6 +29,9 @@ type TimelineRow =
       actor: string;
       reason: string | undefined;
       isAutoEscalation: boolean;
+      /** DIRECTED 단계 무응답 재배정/FORCED 전이에 한해, 그 시점까지 수신 확인이 있었는지. */
+      ackStatus: AckStatus | null;
+      forcedActionLabel: string | null;
     }
   | { kind: "incident"; at: Date; label: string };
 
@@ -25,16 +40,38 @@ export default function AuditPage() {
   const { ref, isFullscreen, toggle } = useFullscreen<HTMLDivElement>();
 
   const rows: TimelineRow[] = useMemo(() => {
-    const eventRows: TimelineRow[] = snapshot.events.map((e) => ({
-      kind: "event",
-      at: e.occurredAt,
-      siteName: snapshot.siteNameByAlertId[e.alertId] ?? e.alertId,
-      fromLabel: STATE_STYLES[e.fromState].label,
-      toLabel: STATE_STYLES[e.toState].label,
-      actor: e.actor,
-      reason: e.reason,
-      isAutoEscalation: (e.reason ?? "").includes("무응답"),
-    }));
+    const eventRows: TimelineRow[] = snapshot.events.map((e) => {
+      const isAutoEscalation = (e.reason ?? "").includes("무응답");
+      // "미확인" vs "확인했으나 미조치"는 DIRECTED 단계(T2) 무응답 재배정/FORCED 전이에만
+      // 의미가 있다 — RECOMMENDED(T1)는 아직 승인 대기 단계라 "수신 확인" 개념이 없다.
+      const isDirectedEscalation = isAutoEscalation && e.fromState === "DIRECTED";
+      const ackStatus: AckStatus | null = isDirectedEscalation
+        ? snapshot.events.some(
+            (other) =>
+              other.alertId === e.alertId &&
+              other.reason === ACKNOWLEDGE_REASON &&
+              other.occurredAt.getTime() <= e.occurredAt.getTime(),
+          )
+          ? "확인했으나 미조치"
+          : "미확인"
+        : null;
+      const forcedActionCode = e.metadata?.forcedAction;
+      const forcedActionLabel =
+        typeof forcedActionCode === "string" ? (FORCED_ACTION_LABEL[forcedActionCode] ?? null) : null;
+
+      return {
+        kind: "event",
+        at: e.occurredAt,
+        siteName: snapshot.siteNameByAlertId[e.alertId] ?? e.alertId,
+        fromLabel: STATE_STYLES[e.fromState].label,
+        toLabel: STATE_STYLES[e.toState].label,
+        actor: e.actor,
+        reason: e.reason,
+        isAutoEscalation,
+        ackStatus,
+        forcedActionLabel,
+      };
+    });
     const incidentRows: TimelineRow[] = OSONG_INCIDENT_TIMELINE.filter(
       (entry) => entry.at.getTime() <= snapshot.now.getTime(),
     ).map((entry) => ({ kind: "incident", at: entry.at, label: entry.label }));
@@ -86,7 +123,23 @@ export default function AuditPage() {
               </span>
               <span className="audit-actor">{row.actor}</span>
               <span className="audit-reason">{row.reason ?? "-"}</span>
-              {row.isAutoEscalation && <span className="audit-badge audit-badge-escalation">무응답 자동 에스컬레이션</span>}
+              {row.ackStatus && (
+                <span
+                  className={
+                    row.ackStatus === "미확인"
+                      ? "audit-badge audit-badge-unacknowledged"
+                      : "audit-badge audit-badge-acknowledged-no-action"
+                  }
+                >
+                  {row.ackStatus}
+                </span>
+              )}
+              {row.forcedActionLabel && (
+                <span className="audit-badge audit-badge-forced-action">{row.forcedActionLabel}</span>
+              )}
+              {!row.ackStatus && !row.forcedActionLabel && row.isAutoEscalation && (
+                <span className="audit-badge audit-badge-escalation">무응답 자동 에스컬레이션</span>
+              )}
             </div>
           ),
         )}

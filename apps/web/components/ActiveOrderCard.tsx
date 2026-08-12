@@ -2,6 +2,7 @@
 
 import type { SiteSnapshot } from "../lib/simulationStore";
 import { STATE_STYLES } from "../lib/stateColors";
+import { StateDot } from "./StateDot";
 import { formatCountdown, formatLevel } from "../lib/format";
 
 interface ActiveOrderCardProps {
@@ -10,6 +11,7 @@ interface ActiveOrderCardProps {
   onSelect: () => void;
   onApprove: () => void;
   onOpenReject: () => void;
+  onAcknowledge: () => void;
   onReportFieldComplete: () => void;
   onApproveRelease: () => void;
 }
@@ -22,6 +24,7 @@ export function ActiveOrderCard({
   onSelect,
   onApprove,
   onOpenReject,
+  onAcknowledge,
   onReportFieldComplete,
   onApproveRelease,
 }: ActiveOrderCardProps) {
@@ -33,7 +36,7 @@ export function ActiveOrderCard({
       <div className="card-header">
         <span className="card-title">{site.name}</span>
         <span className="state-badge">
-          <span className="state-dot" style={{ background: `var(${style.var})` }} />
+          <StateDot state={site.state} />
           {style.label}
         </span>
       </div>
@@ -74,10 +77,19 @@ export function ActiveOrderCard({
             </button>
           </>
         )}
-        {site.state === "APPROVED" && (
-          <button type="button" className="btn btn-primary" onClick={onReportFieldComplete}>
-            현장완료 보고
-          </button>
+        {site.state === "DIRECTED" && (
+          <>
+            {site.acknowledged ? (
+              <span className="ack-badge">✓ 수신 확인됨</span>
+            ) : (
+              <button type="button" className="btn" onClick={onAcknowledge}>
+                수신 확인
+              </button>
+            )}
+            <button type="button" className="btn btn-primary" onClick={onReportFieldComplete}>
+              현장완료 보고
+            </button>
+          </>
         )}
         {site.state === "RELEASE_PENDING" && (
           <button type="button" className="btn btn-primary" onClick={onApproveRelease}>

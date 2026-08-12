@@ -2,6 +2,7 @@
 
 import type { SimulationSnapshot, SimulationStore } from "../lib/simulationStore";
 import { STATE_STYLES } from "../lib/stateColors";
+import { StateDot } from "./StateDot";
 import type { AlertState } from "@chungbuk/domain";
 
 interface SiteMapProps {
@@ -13,7 +14,15 @@ const WIDTH = 600;
 const HEIGHT = 520;
 const PADDING = 60;
 
-const LEGEND_STATES: AlertState[] = ["MONITORING", "RECOMMENDED", "APPROVED", "CONTROLLED", "RELEASE_PENDING", "FORCED"];
+const LEGEND_STATES: AlertState[] = [
+  "MONITORING",
+  "RECOMMENDED",
+  "DIRECTED",
+  "CONTROLLED",
+  "RELEASE_PENDING",
+  "REJECTED",
+  "FORCED",
+];
 
 export function SiteMap({ snapshot, store }: SiteMapProps) {
   const lats = snapshot.sites.map((s) => s.lat);
@@ -57,7 +66,11 @@ export function SiteMap({ snapshot, store }: SiteMapProps) {
                 aria-label={`${site.name} (${style.label})`}
               >
                 {selected && <circle r={16} fill="none" stroke="var(--series-level)" strokeWidth={2} />}
-                <circle r={10} fill={`var(${style.var})`} stroke="var(--surface-1)" strokeWidth={2} />
+                {style.outline ? (
+                  <circle r={10} fill="var(--surface-1)" stroke={`var(${style.var})`} strokeWidth={3} />
+                ) : (
+                  <circle r={10} fill={`var(${style.var})`} stroke="var(--surface-1)" strokeWidth={2} />
+                )}
                 <text y={-16} textAnchor="middle" fontSize={12} fontWeight={700} fill="var(--text-primary)">
                   {site.name}
                 </text>
@@ -70,15 +83,12 @@ export function SiteMap({ snapshot, store }: SiteMapProps) {
         </svg>
 
         <ul className="map-legend">
-          {LEGEND_STATES.map((state) => {
-            const style = STATE_STYLES[state];
-            return (
-              <li key={state} className="state-badge">
-                <span className="state-dot" style={{ background: `var(${style.var})` }} />
-                {style.label}
-              </li>
-            );
-          })}
+          {LEGEND_STATES.map((state) => (
+            <li key={state} className="state-badge">
+              <StateDot state={state} />
+              {STATE_STYLES[state].label}
+            </li>
+          ))}
         </ul>
       </div>
 
