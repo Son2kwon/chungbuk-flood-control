@@ -7,6 +7,8 @@ import { ControlOrderEngine } from "../src/workflow/ControlOrderEngine.js";
 import type { SiteConfig } from "../src/types/index.js";
 
 const GAUGE_ID = "mihocheongyo";
+// packages/domain/test/mihocheongyo.test.ts 참고: 06:40 계획홍수위 도달 역산값.
+const DESIGN_FLOOD_LEVEL = 9.29;
 const SEED_POINTS: SeedPoint[] = [
   { at: new Date("2023-07-15T06:30:00Z"), value: 9.2 },
   { at: new Date("2023-07-15T06:50:00Z"), value: 9.38 },
@@ -21,20 +23,28 @@ const SITE: SiteConfig = {
   gaugeId: GAUGE_ID,
   watchLevel: 7.0,
   alertLevel: 8.0,
-  ladder: ["담당자", "부서장", "실장", "대책본부장"],
+  designFloodLevel: DESIGN_FLOOD_LEVEL,
+  ladder: ["담당 공무원", "팀장", "과장", "부단체장"],
 };
 
+/**
+ * 06:30(ALERT 직행) → 06:40(DESIGN_FLOOD 승격, 타이머 리셋+사다리 점프) → 06:50/07:00(무응답 재배정)
+ * → 07:00(FORCED)까지, 아무도 응답하지 않는 무응답 시나리오를 배속을 바꿔가며 재생한다.
+ * 배속과 무관하게 가상 시각 구간이 동일하면(각 스텝의 가상 시간 폭은 speed로 나눈 뒤 다시 speed를
+ * 곱해 상쇄되므로 변하지 않는다) 승격/재배정이 걸리는 정확한 시각도, 최종 이벤트 순서도 같아야 한다.
+ */
 function runNoResponseScenario(speed: number) {
   const gaugeSource = new ReplaySource([{ gaugeId: GAUGE_ID, points: SEED_POINTS }]);
-  const clock = new ReplayClock({ start: SEED_POINTS[0]!.at, end: SEED_POINTS.at(-1)!.at, speed });
+  const clock = new ReplayClock({ start: SEED_POINTS[0]!.at, end: SEED_POINTS[2]!.at, speed });
   const scheduler = new VirtualScheduler(clock);
   const eventLog = new InMemoryEventLog();
   const engine = new ControlOrderEngine({ site: SITE, gaugeSource, clock, scheduler, eventLog });
   engine.attach(clock);
 
-  // 배속과 무관하게, tick을 잘게 쪼개도 결과는 동일해야 한다.
-  const totalMs = 5 * 60_000;
-  const steps = 10;
+  // 06:30 → 07:00, 30분을 30초 단위(60스텝)로 잘게 쪼갠다. 06:40/06:50/07:00 경계가
+  // 정확히 스텝 경계와 일치하므로, 배속을 나누고 다시 곱해도 그 경계를 건너뛰지 않는다.
+  const totalMs = 30 * 60_000;
+  const steps = 60;
   for (let i = 0; i < steps; i++) {
     clock.tick(totalMs / steps / speed);
   }
@@ -52,13 +62,59 @@ describe("결정론성", () => {
     expect(runB.events).toEqual(runA.events);
   });
 
-  it("배속을 바꿔도(가상 시각 기준 동일 구간) 최종 결과는 동일하다", () => {
-    const runSlow = runNoResponseScenario(1);
-    const runFast = runNoResponseScenario(4);
+  it("배속을 바꿔도(가상 시각 기준 동일 구간) 최종 상태·등급 승격 시각·이벤트 순서가 모두 동일하다", () => {
+    const run1x = runNoResponseScenario(1);
+    const run60x = runNoResponseScenario(60);
+    const run600x = runNoResponseScenario(600);
 
-    expect(runFast.finalState).toBe(runSlow.finalState);
-    expect(runFast.events.map((e) => ({ ...e, occurredAt: e.occurredAt.getTime() }))).toEqual(
-      runSlow.events.map((e) => ({ ...e, occurredAt: e.occurredAt.getTime() })),
-    );
+    for (const run of [run60x, run600x]) {
+      expect(run.finalState).toBe(run1x.finalState);
+      expect(run.events.map((e) => ({ ...e, occurredAt: e.occurredAt.getTime() }))).toEqual(
+        run1x.events.map((e) => ({ ...e, occurredAt: e.occurredAt.getTime() })),
+      );
+    }
+
+    // 승격이 정확히 06:40에 걸렸는지도 배속 무관하게 재확인한다.
+    const upgradeEvent = run1x.events.find((e) => (e.reason ?? "").includes("DESIGN_FLOOD"));
+    expect(upgradeEvent?.occurredAt).toEqual(new Date("2023-07-15T06:40:00Z"));
+  });
+});
+
+/**
+ * ReplayClock/VirtualScheduler는 등록된 breakpoint(타이머 만료 시각)와 seek()/tick()의 최종
+ * 목표 시각에서만 게이지를 재관측한다. seek() 한 번으로 몇 시간을 건너뛰면, 그 사이의 등급
+ * 승격 순간이 어떤 breakpoint와도 우연히 겹치지 않는 한 놓칠 수 있다 — 이걸 그냥 두면
+ * "seek 몇 번으로 재생하느냐"에 따라 결과가 달라진다는 뜻이라 CLAUDE.md 제약 5(결정론성:
+ * 같은 시드 + 같은 배속 + 같은 조작 = 항상 같은 결과)를 어긴다. ControlOrderEngine이 스스로
+ * 재예약하는 게이지 폴링 breakpoint(GAUGE_POLL_INTERVAL_MS)를 심어 두고, ReplayClock이 그
+ * breakpoint를 seek() 도중에도 동적으로 재계산하도록 고쳐서, 큰 seek() 한 번과 그와 동일한
+ * 구간을 잘게 나눈 tick() 여러 번이 완전히 같은 결과를 내도록 보장한다.
+ */
+describe("결정론성 — seek() 경로와 tick() 경로의 동치성", () => {
+  function runToEnd(advance: (clock: ReplayClock, targetMs: number) => void) {
+    const gaugeSource = new ReplaySource([{ gaugeId: GAUGE_ID, points: SEED_POINTS }]);
+    const end = SEED_POINTS[SEED_POINTS.length - 1]!.at;
+    const clock = new ReplayClock({ start: SEED_POINTS[0]!.at, end });
+    const scheduler = new VirtualScheduler(clock);
+    const eventLog = new InMemoryEventLog();
+    const engine = new ControlOrderEngine({ site: SITE, gaugeSource, clock, scheduler, eventLog });
+    engine.attach(clock);
+
+    advance(clock, end.getTime());
+
+    return { finalState: engine.state, events: eventLog.all() };
+  }
+
+  it("06:30에서 09:00으로 seek() 한 번 건너뛴 결과가, 1분 단위로 잘게 tick한 결과와 완전히 동일하다", () => {
+    const viaSeek = runToEnd((clock, targetMs) => clock.seek(new Date(targetMs)));
+    const viaMinuteTicks = runToEnd((clock, targetMs) => {
+      while (clock.now().getTime() < targetMs) {
+        clock.tick(Math.min(60_000, targetMs - clock.now().getTime()));
+      }
+    });
+
+    expect(viaSeek.finalState).toBe("FORCED");
+    expect(viaMinuteTicks.finalState).toBe(viaSeek.finalState);
+    expect(viaMinuteTicks.events).toEqual(viaSeek.events);
   });
 });

@@ -82,6 +82,31 @@
 - **Escalation**: 정해진 시간 내 응답이 없을 때 자동으로 상급/차상위로 올라가는 전이
 - **EventLog**: 모든 상태 전이의 append-only 기록. 상태의 유일한 출처(source of truth)
 
+## 확정된 사양 결정 (v2, 상태기계 교체 시점에 고정)
+
+아래는 협의를 거쳐 확정된 값/이름이다. 이후 단계(특히 Stage 3~4의 UI)에서 그대로 참조하며,
+바꾸려면 여기부터 갱신한다.
+
+- **`designFloodLevel` = 9.29** (미호천교 프로토타입 시드 기준).
+  해발 29.02m의 관측수위 환산표가 없어, 국무조정실 발표 도달 시각(2023-07-15 06:40)을
+  시드 관측값(06:30=9.20, 06:50=9.38)에서 선형보간 역산했다. TODO: 실측 환산표 확보 시 교체.
+- **FORCED 액션 3종의 코드명** — `metadata.forcedAction` 값으로 각각 개별 이벤트에 기록된다.
+  UI(감사 로그, 주민 알림 화면 등)는 이 문자열을 그대로 참조한다. 이름을 바꾸려면 여기와
+  `packages/domain`, UI 참조부를 함께 바꿔야 한다.
+  1. `ENTRY_BAN_NOTICE` — 해당 시설 진입 금지 알림 발송 + 우회 경로 정보
+  2. `ADJACENT_SITE_ALERT` — 인접 시설 담당자에게 확산 알림
+  3. `PROVINCIAL_REPORT` — 도 대책본부 자동 보고
+- **`acknowledge(actor, at)`** — DIRECTED 상태에서 "통제 지시 수신 확인"을 기록하는 액션.
+  상태 전이 없음, 이벤트 로그에만 남는다. **T2 타이머에 영향을 주지 않는다** — 확인으로
+  타이머가 멈추면 "확인했으나 미조치"와 "미확인"을 구분할 수 없게 되기 때문이다(오송에서
+  실제로 벌어진 실패 양상).
+- **`reportInundation(actor, at, reason?)`** — INUNDATION 등급 수동 보고 액션. 시설 침수심은
+  게이지 수위와 다른 물리량이라 `GaugeSource`로 자동 판정하지 않는다(자동 트리거 없음).
+  MONITORING/RECOMMENDED/DIRECTED/REJECTED에서 호출 가능하며, 즉시 DIRECTED·사다리
+  최상단(부단체장)으로 진입한다. 이후 CONTROLLED → RELEASE_PENDING → MONITORING 경로는
+  다른 등급과 동일하게 막힘 없이 동작해야 한다.
+  TODO: 시설별 침수심 센서/신고 입력이 생기면 `SiteSensorSource` 같은 별도 소스로 분리한다.
+
 ## 프로젝트 구조 제안 (아직 생성 안 함 — 승인 대기)
 
 Stage 1이 "도메인 코어만 독립적으로 테스트"를 요구하므로, 도메인 코어가 Next.js/Supabase에

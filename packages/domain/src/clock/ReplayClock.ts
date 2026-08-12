@@ -70,24 +70,31 @@ export class ReplayClock implements Clock {
     }
 
     const targetMs = target.getTime();
-    let cursor = this.current.getTime();
-    if (targetMs === cursor) return;
+    if (targetMs === this.current.getTime()) return;
 
     // 이 구간 안에 있는 예약 지점들을 먼저, 정확한 시각으로 멈춰서 통과시킨다.
     // 그래야 그 시각에 도래하는 콜백이 clock.now()를 물었을 때 (건너뛴 목표 시각이 아니라)
     // 자신이 예약된 정확한 시각을 돌려받는다.
-    const stops = [...new Set(this.breakpoints.filter((t) => t > cursor && t < targetMs))].sort(
-      (a, b) => a - b,
-    );
+    //
+    // 다음 정지점을 "매번 다시" 계산한다 — 한 번에 스냅샷을 떠서 순회하면, notify() 도중
+    // 콜백이 새 breakpoint를 등록해도(예: 타이머가 스스로를 재예약하는 경우) 이번 advanceTo()
+    // 호출 안에서는 그 새 지점을 건너뛰어 버린다. 그러면 큰 폭의 seek()/tick() 한 번과
+    // 같은 구간을 잘게 나눈 tick() 여러 번이 서로 다른 결과를 낼 수 있다 — 이는 곧 배속에
+    // 따라 결과가 달라질 수 있다는 뜻이라 결정론성 제약(CLAUDE.md 제약 5)을 어긴다.
+    for (;;) {
+      const cursorMs = this.current.getTime();
+      const nextStop = this.breakpoints
+        .filter((t) => t > cursorMs && t < targetMs)
+        .reduce((min, t) => (min === undefined || t < min ? t : min), undefined as number | undefined);
 
-    for (const stop of stops) {
-      const from = new Date(cursor);
-      this.current = new Date(stop);
-      cursor = stop;
+      if (nextStop === undefined) break;
+
+      const from = new Date(cursorMs);
+      this.current = new Date(nextStop);
       this.notify(from, this.current);
     }
 
-    const from = new Date(cursor);
+    const from = new Date(this.current.getTime());
     this.current = target;
     this.notify(from, target);
 
