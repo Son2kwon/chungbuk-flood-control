@@ -47,9 +47,9 @@ describe("시드 데이터 정합성", () => {
     expect(SITES.find((s) => s.id === "gungpyeong2-underpass")?.gaugeId).toBe("mihocheon-gyo");
   });
 
-  it("에스컬레이션 사다리는 3단계이고 ladderOrder가 0부터 연속한다", () => {
-    expect(USERS).toHaveLength(3);
+  it("에스컬레이션 사다리는 4단계이고 ladderOrder가 0부터 연속한다", () => {
+    expect(USERS).toHaveLength(4);
     const orders = [...USERS].map((u) => u.ladderOrder).sort((a, b) => a - b);
-    expect(orders).toEqual([0, 1, 2]);
+    expect(orders).toEqual([0, 1, 2, 3]);
   });
 });
