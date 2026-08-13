@@ -370,3 +370,68 @@ describe("시나리오 D: 해제", () => {
     expect(last.reason).toContain("무응답");
   });
 });
+
+describe("시나리오 E: 확인은 alert가 아니라 assignment(그 순간 담당자) 단위로 귀속된다", () => {
+  // 감사 로그(apps/web/app/audit/page.tsx)가 실제로 쓰는 매칭 규칙을 그대로 재현한다:
+  // 무응답 재배정/FORCED 이벤트의 metadata.assignmentId와 같은 assignmentId를 가진
+  // acknowledge 이벤트가 있으면 "확인했으나 미조치", 없으면 "미확인".
+  function ackStatusFor(
+    events: readonly { reason: string | undefined; metadata?: Record<string, unknown> }[],
+    escalation: { reason: string | undefined; metadata?: Record<string, unknown> },
+  ) {
+    const assignmentId = escalation.metadata?.assignmentId;
+    const acknowledged = events.some(
+      (e) => e.reason === "통제 지시 수신 확인" && e.metadata?.assignmentId === assignmentId,
+    );
+    return acknowledged ? "확인했으나 미조치" : "미확인";
+  }
+
+  it("팀장이 확인한 뒤 등급 승격으로 과장에게 재배정되면, 과장의 무응답은 '미확인'이다(팀장의 확인을 물려받지 않는다)", () => {
+    const points = SEED_POINTS.slice(0, 3); // 06:30/06:50/07:00
+    const { clock, engine, eventLog } = setup(SITE, points);
+
+    expect(engine.state).toBe("DIRECTED");
+    expect(engine.severity).toBe("ALERT");
+
+    clock.tick(5 * 60_000); // 06:35 — 팀장이 확인
+    engine.acknowledge("팀장", clock.now());
+
+    clock.tick(5 * 60_000); // 06:40 — DESIGN_FLOOD 승격, 과장에게 재배정(새 assignment)
+    expect(engine.severity).toBe("DESIGN_FLOOD");
+    expect(engine.ladderStep).toBe(2); // 과장
+
+    clock.tick(10 * 60_000); // 06:50 — 과장 무응답 → 부단체장 재배정
+    expect(engine.ladderStep).toBe(3);
+
+    const events = eventLog.forAlert(engine.alertId!);
+    const climbEvent = events.find((e) => (e.reason ?? "").includes("무응답(과장)"))!;
+    const bumpEvent = events.find((e) => (e.reason ?? "").includes("등급 상승"))!;
+    const ackEvent = events.find((e) => e.reason === "통제 지시 수신 확인")!;
+
+    // 팀장의 확인과 과장의 assignment는 서로 다른 assignmentId다.
+    expect(climbEvent.metadata?.assignmentId).toBe(bumpEvent.metadata?.assignmentId); // 둘 다 "과장" assignment
+    expect(climbEvent.metadata?.assignmentId).not.toBe(ackEvent.metadata?.assignmentId); // 팀장 assignment와는 다름
+
+    expect(ackStatusFor(events, climbEvent)).toBe("미확인");
+  });
+
+  it("과장이 직접 확인한 뒤 무응답이면 '확인했으나 미조치'다", () => {
+    const points = SEED_POINTS.slice(0, 3);
+    const site: SiteConfig = { ...SITE, id: "miho-bridge-e2", gaugeId: "ack-e2-gauge" };
+    const { clock, engine, eventLog } = setup(site, points);
+
+    clock.tick(10 * 60_000); // 06:40 — DESIGN_FLOOD 승격, 과장에게 재배정
+    expect(engine.ladderStep).toBe(2);
+
+    clock.tick(60_000); // 06:41 — 과장이 직접 확인
+    engine.acknowledge("과장", clock.now());
+
+    clock.tick(9 * 60_000); // 06:50 — 그래도 무응답 → 부단체장 재배정
+    expect(engine.ladderStep).toBe(3);
+
+    const events = eventLog.forAlert(engine.alertId!);
+    const climbEvent = events.find((e) => (e.reason ?? "").includes("무응답(과장)"))!;
+
+    expect(ackStatusFor(events, climbEvent)).toBe("확인했으나 미조치");
+  });
+});

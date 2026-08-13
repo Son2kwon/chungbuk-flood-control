@@ -58,6 +58,17 @@ export class ControlOrderEngine {
   private orderSeq = 0;
   private eventSeq = 0;
 
+  /**
+   * "지금 사다리의 이 단계를 맡고 있는 사람"의 재직 기간 단위. alertId(주문) 하나에 여러
+   * assignment가 순차로 걸린다 — 사다리가 재배정되거나(무응답 재배정) 등급 승격으로
+   * 담당자가 바뀔 때마다 새 assignment가 시작된다. acknowledge()는 항상 "현재"
+   * assignment에 귀속된다: 팀장이 확인한 뒤 과장으로 재배정되면, 과장의 무응답은
+   * 팀장의 확인과 무관하게 "미확인"이어야 한다 — 그걸 구분 못 하면 실제로 아무도
+   * 확인하지 않은 재배정도 "확인했으나 미조치"로 잘못 표시된다.
+   */
+  private currentAssignmentId: string | null = null;
+  private assignmentSeq = 0;
+
   private _lastReading: Reading | null = null;
   private rejectedAtValue: number | null = null;
   private belowWatchSince: Date | null = null;
@@ -98,6 +109,15 @@ export class ControlOrderEngine {
 
   get alertId(): string | null {
     return this.currentOrderId;
+  }
+
+  /**
+   * 지금 사다리 단계를 맡고 있는 담당자의 재직(assignment) id. acknowledge()가 어느
+   * assignment에 귀속되는지, 그리고 UI가 "지금 이 담당자가 확인했는가"를 판정할 때 쓴다 —
+   * alertId만으로 판정하면 재배정 이후에도 이전 담당자의 확인이 남아있는 것처럼 보인다.
+   */
+  get assignmentId(): string | null {
+    return this.currentAssignmentId;
   }
 
   /** 마지막으로 관측한 게이지 값. UI가 "현재 수위"를 표시할 때 재조회 없이 쓸 수 있다. */
@@ -155,6 +175,12 @@ export class ControlOrderEngine {
     this.schedulePoll(this.clock.now());
   }
 
+  /** 새 담당자 재직(assignment)을 시작한다. 이전 assignment의 확인 여부는 이걸 넘겨받지 않는다. */
+  private newAssignment(): string {
+    this.currentAssignmentId = `${this.currentOrderId}-assignment-${++this.assignmentSeq}`;
+    return this.currentAssignmentId;
+  }
+
   private onReading(reading: Reading, at: Date): void {
     const severity = computeSeverity(
       reading.value,
@@ -207,10 +233,12 @@ export class ControlOrderEngine {
     this._severity = "WARN";
     this._ladderStep = ladderStartIndex("WARN", this.site.ladder.length);
     this._state = "RECOMMENDED";
+    this.newAssignment();
     this.logEvent(from, "RECOMMENDED", "system", reason, at, {
       severity: "WARN",
       ladderStep: this._ladderStep,
       assignedTo: this.site.ladder[this._ladderStep],
+      assignmentId: this.currentAssignmentId,
     });
     this.scheduleT1(at);
   }
@@ -221,10 +249,12 @@ export class ControlOrderEngine {
     this._severity = severity;
     this._ladderStep = ladderStartIndex(severity, this.site.ladder.length);
     this._state = "DIRECTED";
+    this.newAssignment();
     this.logEvent(from, "DIRECTED", "system", reason, at, {
       severity,
       ladderStep: this._ladderStep,
       assignedTo: this.site.ladder[this._ladderStep],
+      assignmentId: this.currentAssignmentId,
     });
     this.scheduleT2(at);
   }
@@ -238,10 +268,14 @@ export class ControlOrderEngine {
     this._severity = severity;
     this._ladderStep = ladderStartIndex(severity, this.site.ladder.length);
     this._state = "DIRECTED";
+    // WARN 담당자(담당 공무원)의 assignment는 여기서 끝난다 — ALERT 이상은 다른 사람(사다리
+    // 상위 단계) 몫이므로, 그 사람이 아직 확인한 적 없는 새 assignment로 넘어간다.
+    this.newAssignment();
     this.logEvent(from, "DIRECTED", "system", `WARN → ${severity} 승격 — 의무 통제 직행`, at, {
       severity,
       ladderStep: this._ladderStep,
       assignedTo: this.site.ladder[this._ladderStep],
+      assignmentId: this.currentAssignmentId,
     });
     this.scheduleT2(at);
   }
@@ -250,11 +284,18 @@ export class ControlOrderEngine {
   private bumpSeverity(severity: Severity, at: Date): void {
     const from = this._severity;
     this._severity = severity;
-    this._ladderStep = Math.max(this._ladderStep, ladderStartIndex(severity, this.site.ladder.length));
+    const nextStep = Math.max(this._ladderStep, ladderStartIndex(severity, this.site.ladder.length));
+    // 담당자가 실제로 바뀔 때만(사다리 단계가 오를 때만) 새 assignment를 연다. 이미 최상단이라
+    // 승격에도 단계가 그대로면(같은 사람) 기존 assignment의 확인 여부를 그대로 이어받는다.
+    if (nextStep !== this._ladderStep) {
+      this._ladderStep = nextStep;
+      this.newAssignment();
+    }
     this.logEvent(this._state, this._state, "system", `등급 상승: ${from} → ${severity}`, at, {
       severity,
       ladderStep: this._ladderStep,
       assignedTo: this.site.ladder[this._ladderStep],
+      assignmentId: this.currentAssignmentId,
     });
     this.scheduleT2(at);
   }
@@ -292,16 +333,20 @@ export class ControlOrderEngine {
 
   private climbOrForce(at: Date, reschedule: () => void): void {
     const top = this.site.ladder.length - 1;
+    // 이 이벤트가 보고하는 건 "방금 시한을 넘긴 그 assignment"다 — 새로 여는 assignment가
+    // 아니다. 그래서 재배정하기 전에 지금 만료되는 assignment의 id를 먼저 붙잡아 둔다.
+    const expiredAssignmentId = this.currentAssignmentId;
     if (this._ladderStep < top) {
       const from = this.site.ladder[this._ladderStep];
       this._ladderStep += 1;
+      this.newAssignment();
       this.logEvent(
         this._state,
         this._state,
         "system",
         `무응답(${from}) → ${withEuroParticle(this.site.ladder[this._ladderStep]!)} 재배정`,
         at,
-        { ladderStep: this._ladderStep, assignedTo: this.site.ladder[this._ladderStep] },
+        { ladderStep: this._ladderStep, assignedTo: this.site.ladder[this._ladderStep], assignmentId: expiredAssignmentId },
       );
       reschedule();
     } else {
@@ -309,6 +354,7 @@ export class ControlOrderEngine {
       this._state = "FORCED";
       this.logEvent(from, "FORCED", "system", `사다리 최상단(${this.site.ladder[top]}) 무응답 → 강제 조치`, at, {
         ladderStep: this._ladderStep,
+        assignmentId: expiredAssignmentId,
       });
       this.forceActions(at);
     }
@@ -348,14 +394,16 @@ export class ControlOrderEngine {
     const top = this.site.ladder.length - 1;
     if (this._ladderStep < top) {
       const from = this.site.ladder[this._ladderStep];
+      const expiredAssignmentId = this.currentAssignmentId;
       this._ladderStep += 1;
+      this.newAssignment();
       this.logEvent(
         this._state,
         this._state,
         "system",
         `해제 승인 무응답(${from}) → ${withEuroParticle(this.site.ladder[this._ladderStep]!)} 재배정`,
         at,
-        { ladderStep: this._ladderStep, assignedTo: this.site.ladder[this._ladderStep] },
+        { ladderStep: this._ladderStep, assignedTo: this.site.ladder[this._ladderStep], assignmentId: expiredAssignmentId },
       );
       this.scheduleT3(at);
     } else {
@@ -382,7 +430,12 @@ export class ControlOrderEngine {
         this._state = "RELEASE_PENDING";
         this._ladderStep = 0;
         this.belowWatchSince = null;
-        this.logEvent(from, "RELEASE_PENDING", "system", `수위 ${this.site.watchLevel}m 미만 30분 지속`, at);
+        this.newAssignment();
+        this.logEvent(from, "RELEASE_PENDING", "system", `수위 ${this.site.watchLevel}m 미만 30분 지속`, at, {
+          ladderStep: this._ladderStep,
+          assignedTo: this.site.ladder[this._ladderStep],
+          assignmentId: this.currentAssignmentId,
+        });
         this.scheduleT3(at);
       }
     } else {
@@ -400,10 +453,13 @@ export class ControlOrderEngine {
     this.t1Due = null;
     const from = this._state;
     this._state = "DIRECTED";
+    // 담당자는 바뀌지 않는다(WARN 사다리 시작 단계 그대로) — 승인은 "같은 사람"이 임무
+    // 유형만 바꾸는 것이라 assignment를 새로 열지 않는다.
     this.logEvent(from, "DIRECTED", actor, undefined, at, {
       severity: this._severity,
       ladderStep: this._ladderStep,
       assignedTo: this.site.ladder[this._ladderStep],
+      assignmentId: this.currentAssignmentId,
     });
     this.scheduleT2(at);
   }
@@ -434,7 +490,11 @@ export class ControlOrderEngine {
     if (this._state !== "DIRECTED") {
       throw new Error(`acknowledge()는 DIRECTED 상태에서만 가능합니다 (현재: ${this._state})`);
     }
-    this.logEvent(this._state, this._state, actor, "통제 지시 수신 확인", at);
+    // 지금 이 순간의 assignment에만 귀속된다 — 나중에 사다리가 재배정되거나 등급 승격으로
+    // 담당자가 바뀌면 새 assignment는 이 확인을 물려받지 않는다(그게 이 필드의 존재 이유다).
+    this.logEvent(this._state, this._state, actor, "통제 지시 수신 확인", at, {
+      assignmentId: this.currentAssignmentId,
+    });
   }
 
   /** DIRECTED → CONTROLLED. 현장 완료 보고. */
@@ -464,6 +524,7 @@ export class ControlOrderEngine {
     this._severity = null;
     this._ladderStep = 0;
     this.currentOrderId = null;
+    this.currentAssignmentId = null;
     this.logEvent(from, "MONITORING", actor, undefined, at);
   }
 
@@ -487,10 +548,12 @@ export class ControlOrderEngine {
         this._severity = "INUNDATION";
         this._ladderStep = ladderStep;
         this._state = "DIRECTED";
+        this.newAssignment();
         this.logEvent(from, "DIRECTED", actor, message, at, {
           severity: "INUNDATION",
           ladderStep: this._ladderStep,
           assignedTo: this.site.ladder[this._ladderStep],
+          assignmentId: this.currentAssignmentId,
         });
         this.scheduleT2(at);
         return;
@@ -503,10 +566,12 @@ export class ControlOrderEngine {
         this._severity = "INUNDATION";
         this._ladderStep = ladderStep;
         this._state = "DIRECTED";
+        this.newAssignment();
         this.logEvent(from, "DIRECTED", actor, message, at, {
           severity: "INUNDATION",
           ladderStep: this._ladderStep,
           assignedTo: this.site.ladder[this._ladderStep],
+          assignmentId: this.currentAssignmentId,
         });
         this.scheduleT2(at);
         return;
@@ -516,11 +581,16 @@ export class ControlOrderEngine {
         this.t2Id = null;
         this.t2Due = null;
         this._severity = "INUNDATION";
-        this._ladderStep = Math.max(this._ladderStep, ladderStep);
+        const nextStep = Math.max(this._ladderStep, ladderStep);
+        if (nextStep !== this._ladderStep) {
+          this._ladderStep = nextStep;
+          this.newAssignment();
+        }
         this.logEvent(this._state, this._state, actor, message, at, {
           severity: "INUNDATION",
           ladderStep: this._ladderStep,
           assignedTo: this.site.ladder[this._ladderStep],
+          assignmentId: this.currentAssignmentId,
         });
         this.scheduleT2(at);
         return;
