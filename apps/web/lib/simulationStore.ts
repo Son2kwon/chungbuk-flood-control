@@ -103,9 +103,12 @@ export class SimulationStore {
       if (alertId) this.alertIdToSiteName.set(alertId, site.name);
 
       // acknowledged는 UI 전용 플래그가 아니라 이벤트 로그에서 파생한다 — 도메인이 실제로
-      // 기록한 acknowledge() 이벤트가 있는지로 판정한다.
-      const acknowledged = alertId
-        ? allEvents.some((e) => e.alertId === alertId && e.reason === ACKNOWLEDGE_REASON)
+      // 기록한 acknowledge() 이벤트가 있는지로 판정한다. alertId가 아니라 assignmentId로
+      // 매칭한다: 팀장이 확인한 뒤 등급 승격/무응답으로 과장에게 재배정되면, 과장은 아직
+      // 확인한 적 없는 새 assignment이므로 배지가 다시 "수신 확인" 버튼으로 돌아가야 한다.
+      const assignmentId = engine.assignmentId;
+      const acknowledged = assignmentId
+        ? allEvents.some((e) => e.reason === ACKNOWLEDGE_REASON && e.metadata?.assignmentId === assignmentId)
         : false;
 
       return {

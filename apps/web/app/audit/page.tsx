@@ -44,13 +44,18 @@ export default function AuditPage() {
       const isAutoEscalation = (e.reason ?? "").includes("무응답");
       // "미확인" vs "확인했으나 미조치"는 DIRECTED 단계(T2) 무응답 재배정/FORCED 전이에만
       // 의미가 있다 — RECOMMENDED(T1)는 아직 승인 대기 단계라 "수신 확인" 개념이 없다.
+      //
+      // alertId(주문) 단위가 아니라 assignmentId(그 시점 담당자의 재직 기간) 단위로 확인
+      // 여부를 따진다. 이 이벤트의 metadata.assignmentId는 "방금 무응답으로 만료된"
+      // assignment를 가리킨다(ControlOrderEngine.climbOrForce 참고) — 팀장이 확인한 뒤
+      // 과장에게 재배정되면, 과장의 무응답은 팀장의 확인과 별개의 assignmentId라 항상
+      // "미확인"으로 잡힌다.
       const isDirectedEscalation = isAutoEscalation && e.fromState === "DIRECTED";
+      const escalationAssignmentId =
+        isDirectedEscalation && typeof e.metadata?.assignmentId === "string" ? e.metadata.assignmentId : null;
       const ackStatus: AckStatus | null = isDirectedEscalation
         ? snapshot.events.some(
-            (other) =>
-              other.alertId === e.alertId &&
-              other.reason === ACKNOWLEDGE_REASON &&
-              other.occurredAt.getTime() <= e.occurredAt.getTime(),
+            (other) => other.reason === ACKNOWLEDGE_REASON && other.metadata?.assignmentId === escalationAssignmentId,
           )
           ? "확인했으나 미조치"
           : "미확인"
