@@ -45,7 +45,11 @@ export const GAUGES: readonly GaugeSeed[] = [
     river: "미호강",
     warnLevel: 5.0,
     alertLevel: 6.0,
-    designFloodLevel: 7.0, // TODO: 임시값(alertLevel+1.0m). 실측 환산표로 교체.
+    // TODO: 임시값(alertLevel+2.0m), 실측 계획홍수위 확인 필요. +1.0m였을 때는 06:30 시드
+    // 관측값(7.8m)이 이미 그 값을 넘어 06:30에 곧장 DESIGN_FLOOD로 시작해 06:50에 FORCED로
+    // 끝나버렸다 — 실측 근거가 있는 미호천교(9.29, 07:00 FORCED)보다 먼저 끝나 데모 서사를
+    // 해쳤다. +2.0m로 올려 06:30엔 ALERT로 시작하게 한다.
+    designFloodLevel: 8.0,
     upstreamOf: ["sangjocheon-gyo"],
   },
   {
