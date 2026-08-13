@@ -2,6 +2,7 @@ import type { Clock } from "../clock/Clock";
 import type { ReplayClock } from "../clock/ReplayClock";
 import { computeSeverity } from "../control/severity";
 import { ladderStartIndex } from "../control/ladder";
+import { withEuroParticle } from "../control/korean";
 import type { EventLog } from "../events/EventLog";
 import type { GaugeSource, Reading } from "../gauge/GaugeSource";
 import type { Scheduler } from "../scheduler/Scheduler";
@@ -298,7 +299,7 @@ export class ControlOrderEngine {
         this._state,
         this._state,
         "system",
-        `무응답(${from}) → ${this.site.ladder[this._ladderStep]}로 재배정`,
+        `무응답(${from}) → ${withEuroParticle(this.site.ladder[this._ladderStep]!)} 재배정`,
         at,
         { ladderStep: this._ladderStep, assignedTo: this.site.ladder[this._ladderStep] },
       );
@@ -352,7 +353,7 @@ export class ControlOrderEngine {
         this._state,
         this._state,
         "system",
-        `해제 승인 무응답(${from}) → ${this.site.ladder[this._ladderStep]}로 재배정`,
+        `해제 승인 무응답(${from}) → ${withEuroParticle(this.site.ladder[this._ladderStep]!)} 재배정`,
         at,
         { ladderStep: this._ladderStep, assignedTo: this.site.ladder[this._ladderStep] },
       );
