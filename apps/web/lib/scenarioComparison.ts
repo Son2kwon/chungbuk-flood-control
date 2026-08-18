@@ -15,8 +15,9 @@ const SITE_ID = "gungpyeong2-underpass";
 const FLOOD_AT = new Date("2023-07-15T08:27:00Z");
 
 // packages/domain/test/mihocheongyo.test.ts 시나리오 B와 동일한 타이밍.
-// 06:30 ALERT로 DIRECTED 직행(의무 통제라 승인 절차가 없다) → 06:35 수신 확인(타이머 불변) →
-// 06:40 DESIGN_FLOOD 승격(타이머 리셋) → T2(DESIGN_FLOOD)=10분 만료(06:50) 직전에 완료 보고.
+// 06:30 실측 9.20m = ALERT로 DIRECTED 직행(의무 통제라 승인 절차가 없다) → 06:35 수신
+// 확인(타이머 불변) → 06:40 DESIGN_FLOOD 승격(타이머 리셋) → T2(DESIGN_FLOOD)=10분
+// 만료(06:50) 직전에 완료 보고.
 const ACKNOWLEDGE_AT = new Date("2023-07-15T06:35:00Z");
 const COMPLETE_AT = new Date("2023-07-15T06:49:59.999Z");
 

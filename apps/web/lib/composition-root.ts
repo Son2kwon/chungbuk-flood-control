@@ -10,7 +10,13 @@ import {
 } from "@chungbuk/domain";
 import { createChungbukReplayGaugeSource, GAUGES, SITES, USERS, type SiteSeed } from "@chungbuk/data";
 
-/** 궁평2지하차도 사고 재현 시드의 전체 구간. GAUGE_READINGS(첫/마지막 관측점)와 일치한다. */
+/**
+ * 리플레이 재생이 시작되는 시각. GAUGE_READINGS의 데이터 범위(06:00~09:00)와는 다르다 —
+ * 데이터는 06:00부터 있지만, 재생은 06:30부터 시작한다. 06:00부터 재생하면 06:15/06:30에
+ * ALERT 사다리가 이미 최상단까지 재배정돼서, 06:40 DESIGN_FLOOD 승격이 사다리를 점프시키는
+ * 장면 자체가 사라진다("이미 꼭대기라 오를 곳이 없다"). 06:30 시작이면 06:40 승격이 실제로
+ * 팀장→과장으로 사다리를 점프시키고, FORCED도 07:00에 걸려 07:01 신고 타임라인과 대비된다.
+ */
 export const SEED_START = new Date("2023-07-15T06:30:00Z");
 export const SEED_END = new Date("2023-07-15T09:00:00Z");
 

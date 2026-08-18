@@ -7,16 +7,25 @@ import { ControlOrderEngine } from "../src/workflow/ControlOrderEngine.js";
 import type { SiteConfig } from "../src/types/index.js";
 
 const GAUGE_ID = "mihocheongyo";
-// packages/domain/test/mihocheongyo.test.ts 참고: 06:40 계획홍수위 도달 역산값.
-const DESIGN_FLOOD_LEVEL = 9.29;
-const SEED_POINTS: SeedPoint[] = [
-  { at: new Date("2023-07-15T06:30:00Z"), value: 9.2 },
-  { at: new Date("2023-07-15T06:50:00Z"), value: 9.38 },
-  { at: new Date("2023-07-15T07:00:00Z"), value: 9.47 },
-  { at: new Date("2023-07-15T08:30:00Z"), value: 10.01 },
-  { at: new Date("2023-07-15T08:50:00Z"), value: 10.05 },
-  { at: new Date("2023-07-15T09:00:00Z"), value: 10.06 },
-];
+// packages/domain/test/mihocheongyo.test.ts 참고: 06:40 실측 관측값 = 계획홍수위 도달 시각.
+const DESIGN_FLOOD_LEVEL = 9.3;
+// 2023-07-15 06:00~09:00, 10분 간격 실측(packages/data/src/seed/readings.ts와 동일 값).
+const MIHO_TIMES = [
+  "06:00", "06:10", "06:20", "06:30", "06:40", "06:50", "07:00", "07:10", "07:20", "07:30",
+  "07:40", "07:50", "08:00", "08:10", "08:20", "08:30", "08:40", "08:50", "09:00",
+] as const;
+const MIHO_VALUES = [
+  8.91, 9.01, 9.1, 9.2, 9.3, 9.38, 9.47, 9.56, 9.64, 9.72,
+  9.79, 9.85, 9.91, 9.96, 9.99, 10.01, 10.03, 10.05, 10.06,
+] as const;
+const SEED_POINTS: SeedPoint[] = MIHO_TIMES.map((t, i) => ({
+  at: new Date(`2023-07-15T${t}:00Z`),
+  value: MIHO_VALUES[i]!,
+}));
+// 데이터 범위(06:00~09:00)와 재생 시작점은 다르다 — packages/domain/test/mihocheongyo.test.ts,
+// apps/web/lib/composition-root.ts의 SEED_START와 동일한 이유(06:00 시작이면 06:40 승격
+// 시점에 사다리가 이미 최상단이라 "승격이 사다리를 점프시키는" 장면이 사라진다).
+const REPLAY_START = new Date("2023-07-15T06:30:00Z");
 const SITE: SiteConfig = {
   id: "miho-bridge",
   name: "미호천교",
@@ -28,14 +37,14 @@ const SITE: SiteConfig = {
 };
 
 /**
- * 06:30(ALERT 직행) → 06:40(DESIGN_FLOOD 승격, 타이머 리셋+사다리 점프) → 06:50/07:00(무응답 재배정)
+ * 06:30(ALERT 직행) → 06:40(DESIGN_FLOOD 승격, 타이머 리셋+사다리 점프) → 06:50(무응답 재배정)
  * → 07:00(FORCED)까지, 아무도 응답하지 않는 무응답 시나리오를 배속을 바꿔가며 재생한다.
  * 배속과 무관하게 가상 시각 구간이 동일하면(각 스텝의 가상 시간 폭은 speed로 나눈 뒤 다시 speed를
  * 곱해 상쇄되므로 변하지 않는다) 승격/재배정이 걸리는 정확한 시각도, 최종 이벤트 순서도 같아야 한다.
  */
 function runNoResponseScenario(speed: number) {
   const gaugeSource = new ReplaySource([{ gaugeId: GAUGE_ID, points: SEED_POINTS }]);
-  const clock = new ReplayClock({ start: SEED_POINTS[0]!.at, end: SEED_POINTS[2]!.at, speed });
+  const clock = new ReplayClock({ start: REPLAY_START, end: SEED_POINTS[6]!.at, speed }); // end = 07:00
   const scheduler = new VirtualScheduler(clock);
   const eventLog = new InMemoryEventLog();
   const engine = new ControlOrderEngine({ site: SITE, gaugeSource, clock, scheduler, eventLog });
@@ -94,7 +103,7 @@ describe("결정론성 — seek() 경로와 tick() 경로의 동치성", () => {
   function runToEnd(advance: (clock: ReplayClock, targetMs: number) => void) {
     const gaugeSource = new ReplaySource([{ gaugeId: GAUGE_ID, points: SEED_POINTS }]);
     const end = SEED_POINTS[SEED_POINTS.length - 1]!.at;
-    const clock = new ReplayClock({ start: SEED_POINTS[0]!.at, end });
+    const clock = new ReplayClock({ start: REPLAY_START, end });
     const scheduler = new VirtualScheduler(clock);
     const eventLog = new InMemoryEventLog();
     const engine = new ControlOrderEngine({ site: SITE, gaugeSource, clock, scheduler, eventLog });

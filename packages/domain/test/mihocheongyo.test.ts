@@ -7,22 +7,34 @@ import { ControlOrderEngine } from "../src/workflow/ControlOrderEngine.js";
 import type { SiteConfig } from "../src/types/index.js";
 
 // 미호천교 시드: 주의보 7.0m / 경보 8.0m. 오송 궁평2지하차도 사고 재현 시나리오.
+// 2023-07-15 06:00~09:00, 10분 간격 실측(packages/data/src/seed/readings.ts와 동일 값).
 //
-// 계획홍수위(designFloodLevel)는 9.29로 확정한다. 해발 29.02m의 관측수위 환산표가 아직
-// 없어서, 국무조정실 발표 도달 시각(2023-07-15 06:40)을 시드 관측값에서 역산했다:
-// 06:30=9.20, 06:50=9.38 사이를 선형보간하면 06:40 = 9.20 + (9.38-9.20)*(10/20) = 9.29.
-// TODO: 실측 관측수위-표고 환산표가 확보되면 역산값 대신 교체한다.
+// 계획홍수위(designFloodLevel)는 9.30으로 확정한다. 06:40 실측 관측값이 9.30이고,
+// 국무조정실 발표상 06:40이 계획홍수위 도달 시각이다 — 그 시각의 실측값 자체가 곧
+// 계획홍수위다(이전 9.29는 06:30/06:50 관측값 사이 선형보간 추정치였다).
 const GAUGE_ID = "mihocheongyo";
-const DESIGN_FLOOD_LEVEL = 9.29;
-const SEED_POINTS: SeedPoint[] = [
-  { at: new Date("2023-07-15T06:30:00Z"), value: 9.2 },
-  { at: new Date("2023-07-15T06:50:00Z"), value: 9.38 },
-  { at: new Date("2023-07-15T07:00:00Z"), value: 9.47 },
-  { at: new Date("2023-07-15T08:30:00Z"), value: 10.01 },
-  { at: new Date("2023-07-15T08:50:00Z"), value: 10.05 },
-  { at: new Date("2023-07-15T09:00:00Z"), value: 10.06 },
-];
-const SEED_START = SEED_POINTS[0]!.at;
+const DESIGN_FLOOD_LEVEL = 9.3;
+const MIHO_TIMES = [
+  "06:00", "06:10", "06:20", "06:30", "06:40", "06:50", "07:00", "07:10", "07:20", "07:30",
+  "07:40", "07:50", "08:00", "08:10", "08:20", "08:30", "08:40", "08:50", "09:00",
+] as const;
+const MIHO_VALUES = [
+  8.91, 9.01, 9.1, 9.2, 9.3, 9.38, 9.47, 9.56, 9.64, 9.72,
+  9.79, 9.85, 9.91, 9.96, 9.99, 10.01, 10.03, 10.05, 10.06,
+] as const;
+const SEED_POINTS: SeedPoint[] = MIHO_TIMES.map((t, i) => ({
+  at: new Date(`2023-07-15T${t}:00Z`),
+  value: MIHO_VALUES[i]!,
+}));
+
+/**
+ * 데이터 범위(06:00~09:00)와 재생 시작점은 다르다 — apps/web/lib/composition-root.ts의
+ * SEED_START와 동일한 이유다. 06:00부터 재생하면 06:15/06:30에 ALERT 사다리가 이미
+ * 최상단까지 재배정돼서, 06:40 DESIGN_FLOOD 승격이 사다리를 점프시키는 장면 자체가
+ * 사라진다. 06:30부터 재생해야 06:40 승격이 실제로 팀장→과장으로 점프시키고, FORCED도
+ * 07:00에 걸려 07:01 신고 타임라인과 대비된다.
+ */
+const REPLAY_START = new Date("2023-07-15T06:30:00Z");
 
 // 사다리: 담당 공무원 → 팀장 → 과장 → 부단체장 (index 0~3)
 const LADDER = ["담당 공무원", "팀장", "과장", "부단체장"] as const;
@@ -37,10 +49,10 @@ const SITE: SiteConfig = {
   ladder: LADDER,
 };
 
-function setup(site: SiteConfig = SITE, points: SeedPoint[] = SEED_POINTS, end?: Date) {
+function setup(site: SiteConfig = SITE, points: SeedPoint[] = SEED_POINTS, end?: Date, start?: Date) {
   const gaugeSource = new ReplaySource([{ gaugeId: site.gaugeId, points }]);
-  const start = points[0]!.at;
-  const clock = new ReplayClock({ start, end: end ?? points[points.length - 1]!.at });
+  const clockStart = start ?? points[0]!.at;
+  const clock = new ReplayClock({ start: clockStart, end: end ?? points[points.length - 1]!.at });
   const scheduler = new VirtualScheduler(clock);
   const eventLog = new InMemoryEventLog();
   const engine = new ControlOrderEngine({ site, gaugeSource, clock, scheduler, eventLog });
@@ -49,19 +61,24 @@ function setup(site: SiteConfig = SITE, points: SeedPoint[] = SEED_POINTS, end?:
 }
 
 describe("시나리오 A: 무응답 (오송 재현)", () => {
-  it("06:30 ALERT로 DIRECTED 직행(RECOMMENDED 생략) → 06:40 DESIGN_FLOOD 승격(타이머 리셋+사다리 점프) → 무응답 → FORCED(3개 액션 개별 기록)", () => {
-    const { clock, engine, eventLog } = setup();
+  it("06:30 ALERT로 DIRECTED 직행(RECOMMENDED 생략) → 06:40 DESIGN_FLOOD 승격(정각, 타이머 리셋+사다리 점프) → 06:50 무응답 재배정 → 07:00 FORCED(3개 액션 개별 기록)", () => {
+    const { clock, engine, eventLog } = setup(SITE, SEED_POINTS, undefined, REPLAY_START);
 
     // 06:30: 9.20m는 ALERT(경보) 등급 — 의무 통제이므로 RECOMMENDED를 건너뛰고 DIRECTED로 직행.
     expect(engine.state).toBe("DIRECTED");
     expect(engine.severity).toBe("ALERT");
     expect(engine.ladderStep).toBe(1); // ALERT는 팀장(index 1)부터
-    expect(engine.lastReading).toEqual({ gaugeId: GAUGE_ID, at: SEED_START, value: 9.2, interpolated: false });
+    expect(engine.lastReading).toEqual({ gaugeId: GAUGE_ID, at: REPLAY_START, value: 9.2, interpolated: false });
     expect(engine.deadlineAt).toEqual(new Date("2023-07-15T06:45:00Z")); // T2(ALERT) = 15분
     const alertId = engine.alertId!;
 
-    // 06:40: 선형보간 값이 정확히 9.29 (계획홍수위) → DESIGN_FLOOD로 승격.
+    // 06:40: 실측값이 정확히 9.30(계획홍수위, 보간이 아니라 그 시각 자체의 실측점) →
+    // DESIGN_FLOOD로 승격. 팀장(1)에서 과장(2)으로 사다리가 점프하고 타이머가 리셋된다.
+    // >= 비교이고 부동소수점 보간을 거치지 않는 정확한 관측점이라 06:40 정각에 걸린다
+    // (관측 시각·폴링 시각 정렬도 정수 밀리초 산술이라 어긋나지 않는다 — 아래 별도 단위
+    // 테스트로 이 지점을 못박는다).
     clock.tick(10 * 60_000);
+    expect(clock.now()).toEqual(new Date("2023-07-15T06:40:00Z"));
     expect(engine.state).toBe("DIRECTED");
     expect(engine.severity).toBe("DESIGN_FLOOD");
     expect(engine.ladderStep).toBe(2); // 과장으로 점프
@@ -91,11 +108,11 @@ describe("시나리오 A: 무응답 (오송 재현)", () => {
 
     // [0] MONITORING → DIRECTED (06:30, ALERT)
     expect(events[0]!.fromState).toBe("MONITORING");
-    expect(events[0]!.occurredAt).toEqual(SEED_START);
+    expect(events[0]!.occurredAt).toEqual(REPLAY_START);
     expect(events[0]!.actor).toBe("system");
     expect(events[0]!.metadata).toMatchObject({ severity: "ALERT", ladderStep: 1, assignedTo: "팀장" });
 
-    // [1] 승격: ALERT → DESIGN_FLOOD (06:40)
+    // [1] 승격: ALERT → DESIGN_FLOOD (06:40 정각) — 국무조정실 발표 시각과 정확히 일치해야 한다.
     expect(events[1]!.occurredAt).toEqual(new Date("2023-07-15T06:40:00Z"));
     expect(events[1]!.reason).toContain("DESIGN_FLOOD");
     expect(events[1]!.metadata).toMatchObject({ severity: "DESIGN_FLOOD", ladderStep: 2, assignedTo: "과장" });
@@ -126,11 +143,37 @@ describe("시나리오 A: 무응답 (오송 재현)", () => {
     expect(events[5]!.occurredAt).toEqual(new Date("2023-07-15T07:00:00Z"));
     expect(events[6]!.occurredAt).toEqual(new Date("2023-07-15T07:00:00Z"));
   });
+
+  it("06:40 DESIGN_FLOOD 승격은 >= 비교·부동소수점·관측 시각 정렬 어디에도 오차 없이 정각에 걸린다", () => {
+    // 06:40은 국무조정실 공식 발표 헤드라인 시각이라 오차가 있으면 안 된다. 이 테스트는
+    // 그 세 지점(>= 대 >, 부동소수점, 폴링/관측 시각 정렬)을 개별적으로 확인한다.
+    const gaugeSource = new ReplaySource([{ gaugeId: GAUGE_ID, points: SEED_POINTS }]);
+
+    // 1) 06:40은 보간이 아니라 실측점 자체다 — 부동소수점 보간 연산을 거치지 않는다.
+    const exactReading = gaugeSource.read(GAUGE_ID, new Date("2023-07-15T06:40:00Z"));
+    expect(exactReading).toEqual({
+      gaugeId: GAUGE_ID,
+      at: new Date("2023-07-15T06:40:00Z"),
+      value: 9.3,
+      interpolated: false,
+    });
+
+    // 2) 그 값과 계획홍수위가 >= 비교로 정확히 같다(> 였다면 이 순간 걸리지 않았을 것이다).
+    expect(exactReading!.value >= DESIGN_FLOOD_LEVEL).toBe(true);
+    expect(exactReading!.value).toBe(DESIGN_FLOOD_LEVEL);
+
+    // 3) 06:30 재생 시작 + 게이지 폴링(1분 간격) 10회 = 06:40 정각. 정수 밀리초 산술이라
+    // 부동소수점 누적 오차가 없다 — 관측 시각과 폴링 시각이 정확히 만난다.
+    const { clock, engine } = setup(SITE, SEED_POINTS, undefined, REPLAY_START);
+    clock.tick(10 * 60_000);
+    expect(clock.now().getTime()).toBe(new Date("2023-07-15T06:40:00Z").getTime());
+    expect(engine.severity).toBe("DESIGN_FLOOD");
+  });
 });
 
 describe("시나리오 B: 대응 (수신 확인 후 조치)", () => {
   it("06:35 수신 확인(타이머 불변) → 06:40 승격 → 06:49:59.999 현장완료 보고 → 08:30에도 CONTROLLED 유지", () => {
-    const { clock, engine, eventLog } = setup();
+    const { clock, engine, eventLog } = setup(SITE, SEED_POINTS, undefined, REPLAY_START);
 
     expect(engine.state).toBe("DIRECTED");
     expect(engine.deadlineAt).toEqual(new Date("2023-07-15T06:45:00Z"));
@@ -160,6 +203,7 @@ describe("시나리오 B: 대응 (수신 확인 후 조치)", () => {
 
     // 08:30(실제 침수 시각)까지 진행해도 CONTROLLED를 유지한다.
     clock.tick(1);
+    expect(clock.now()).toEqual(new Date("2023-07-15T06:50:00Z"));
     clock.tick(100 * 60_000);
     expect(clock.now()).toEqual(new Date("2023-07-15T08:30:00Z"));
     expect(engine.state).toBe("CONTROLLED");
@@ -386,21 +430,32 @@ describe("시나리오 E: 확인은 alert가 아니라 assignment(그 순간 담
     return acknowledged ? "확인했으나 미조치" : "미확인";
   }
 
+  // 공유 SEED_POINTS(실측 데이터)와 독립된 전용 시드다 — 이 시나리오는 "assignment 단위
+  // 귀속"이라는 일반적인 도메인 성질을 검증하는 것이지, 미호천교 실측 시나리오 자체를
+  // 검증하는 게 아니다. 실측 데이터의 정확한 타이밍이 바뀌어도 이 테스트는 영향받지 않는다.
   it("팀장이 확인한 뒤 등급 승격으로 과장에게 재배정되면, 과장의 무응답은 '미확인'이다(팀장의 확인을 물려받지 않는다)", () => {
-    const points = SEED_POINTS.slice(0, 3); // 06:30/06:50/07:00
-    const { clock, engine, eventLog } = setup(SITE, points);
+    const points: SeedPoint[] = [
+      { at: new Date("2023-07-15T06:00:00Z"), value: 8.5 }, // ALERT
+      { at: new Date("2023-07-15T06:05:00Z"), value: 9.5 }, // DESIGN_FLOOD
+      { at: new Date("2023-07-15T06:20:00Z"), value: 9.5 },
+    ];
+    const site: SiteConfig = { ...SITE, id: "miho-bridge-e1", gaugeId: "ack-e1-gauge" };
+    const { clock, engine, eventLog } = setup(site, points, points[2]!.at);
 
     expect(engine.state).toBe("DIRECTED");
     expect(engine.severity).toBe("ALERT");
 
-    clock.tick(5 * 60_000); // 06:35 — 팀장이 확인
+    clock.tick(2 * 60_000); // 06:02 — 팀장이 확인
     engine.acknowledge("팀장", clock.now());
 
-    clock.tick(5 * 60_000); // 06:40 — DESIGN_FLOOD 승격, 과장에게 재배정(새 assignment)
+    // 06:00→9.5로 선형 상승하는 값이 06:04에 9.30(계획홍수위)을 넘는다 — DESIGN_FLOOD
+    // 승격, 과장에게 재배정(새 assignment). 06:05까지 tick해서 승격이 끝난 상태를 본다.
+    clock.tick(3 * 60_000); // 06:05
     expect(engine.severity).toBe("DESIGN_FLOOD");
     expect(engine.ladderStep).toBe(2); // 과장
+    expect(engine.deadlineAt).toEqual(new Date("2023-07-15T06:14:00Z")); // T2(DESIGN_FLOOD)=10분, 06:04 기준
 
-    clock.tick(10 * 60_000); // 06:50 — 과장 무응답 → 부단체장 재배정
+    clock.tick(9 * 60_000); // 06:14 — 과장 무응답 → 부단체장 재배정
     expect(engine.ladderStep).toBe(3);
 
     const events = eventLog.forAlert(engine.alertId!);
@@ -416,17 +471,22 @@ describe("시나리오 E: 확인은 alert가 아니라 assignment(그 순간 담
   });
 
   it("과장이 직접 확인한 뒤 무응답이면 '확인했으나 미조치'다", () => {
-    const points = SEED_POINTS.slice(0, 3);
+    const points: SeedPoint[] = [
+      { at: new Date("2023-07-15T06:00:00Z"), value: 8.5 },
+      { at: new Date("2023-07-15T06:05:00Z"), value: 9.5 },
+      { at: new Date("2023-07-15T06:20:00Z"), value: 9.5 },
+    ];
     const site: SiteConfig = { ...SITE, id: "miho-bridge-e2", gaugeId: "ack-e2-gauge" };
-    const { clock, engine, eventLog } = setup(site, points);
+    const { clock, engine, eventLog } = setup(site, points, points[2]!.at);
 
-    clock.tick(10 * 60_000); // 06:40 — DESIGN_FLOOD 승격, 과장에게 재배정
+    clock.tick(5 * 60_000); // 06:05 — DESIGN_FLOOD 승격(06:04), 과장에게 재배정
+    expect(engine.severity).toBe("DESIGN_FLOOD");
     expect(engine.ladderStep).toBe(2);
 
-    clock.tick(60_000); // 06:41 — 과장이 직접 확인
+    clock.tick(60_000); // 06:06 — 과장이 직접 확인
     engine.acknowledge("과장", clock.now());
 
-    clock.tick(9 * 60_000); // 06:50 — 그래도 무응답 → 부단체장 재배정
+    clock.tick(8 * 60_000); // 06:14 — 그래도 무응답 → 부단체장 재배정
     expect(engine.ladderStep).toBe(3);
 
     const events = eventLog.forAlert(engine.alertId!);
