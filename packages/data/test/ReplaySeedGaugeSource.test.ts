@@ -23,17 +23,17 @@ describe("createChungbukReplayGaugeSource", () => {
     });
   });
 
-  it("07:00~08:30 관측 공백 구간은 선형 보간하고 interpolated: true를 단다", () => {
+  it("두 실측점 사이(10분 간격)는 선형 보간하고 interpolated: true를 단다", () => {
     const source = createChungbukReplayGaugeSource();
-    // 미호천교: 07:00 = 9.47, 08:30 = 10.01 → 정중앙(07:45)은 두 값의 평균.
-    const reading = source.read("mihocheon-gyo", new Date("2023-07-15T07:45:00Z"));
+    // 미호천교: 06:00 = 8.91, 06:10 = 9.01 → 정중앙(06:05)은 두 값의 평균.
+    const reading = source.read("mihocheon-gyo", new Date("2023-07-15T06:05:00Z"));
     expect(reading?.interpolated).toBe(true);
-    expect(reading?.value).toBeCloseTo((9.47 + 10.01) / 2, 5);
+    expect(reading?.value).toBeCloseTo((8.91 + 9.01) / 2, 5);
   });
 
   it("시드 범위 밖은 null이다 (마지막 값 유지 금지)", () => {
     const source = createChungbukReplayGaugeSource();
-    expect(source.read("mihocheon-gyo", new Date("2023-07-15T06:00:00Z"))).toBeNull();
+    expect(source.read("mihocheon-gyo", new Date("2023-07-15T05:50:00Z"))).toBeNull();
     expect(source.read("mihocheon-gyo", new Date("2023-07-15T09:30:00Z"))).toBeNull();
   });
 

@@ -28,10 +28,10 @@ describe("시드 데이터 정합성", () => {
     }
   });
 
-  it("모든 관측소는 6개 관측 시각 * 값 쌍을 갖고, 주의보 < 경보다", () => {
+  it("모든 관측소는 19개 관측 시각 * 값 쌍(06:00~09:00, 10분 간격 실측)을 갖고, 주의보 < 경보다", () => {
     expect(GAUGE_READINGS).toHaveLength(7);
     for (const g of GAUGE_READINGS) {
-      expect(g.points).toHaveLength(6);
+      expect(g.points).toHaveLength(19);
     }
     for (const gauge of GAUGES) {
       expect(gauge.warnLevel).toBeLessThan(gauge.alertLevel);

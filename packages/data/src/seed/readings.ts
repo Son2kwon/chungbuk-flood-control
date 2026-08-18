@@ -1,15 +1,16 @@
 import type { SeedPoint } from "@chungbuk/domain";
 
 /**
- * 2023-07-15 궁평2지하차도 사고 재현 시계열.
+ * 2023-07-15 궁평2지하차도 사고 재현 시계열. 미호강 7개 관측소, 06:00~09:00 10분 간격 실측.
  *
  * 시각은 Stage 1 도메인 테스트와 동일한 관례로 ISO "Z" 표기를 그대로 사용한다
  * (실제로는 KST 벽시계 시각이지만, 프로토타입에서는 타임존 변환 없이 문자열 그대로를
  * 시드의 정본으로 삼는다 — 도메인/데이터/앱 전 계층이 같은 관례를 공유해야 하므로 여기서
  * 임의로 UTC 변환을 하지 않는다).
  *
- * 07:00~08:30 사이는 관측 공백이다. GaugeSource가 이 구간을 조회하면 선형 보간하고
- * interpolated: true를 반드시 반환해야 한다 (readings 테이블에는 원본 관측점만 저장한다).
+ * 전 구간이 10분 간격 실측이라 관측 공백이 없다 — GaugeSource가 이 범위 안의 시각을
+ * 조회하면 두 실측점 사이를 선형 보간할 뿐, 큰 폭으로 값을 지어내는 구간(과거 07:00~08:30
+ * 관측 공백 같은)은 더 이상 없다.
  */
 export interface GaugeReadingSeed {
   gaugeId: string;
@@ -17,24 +18,76 @@ export interface GaugeReadingSeed {
 }
 
 const TIMESTAMPS = [
+  "2023-07-15T06:00:00Z",
+  "2023-07-15T06:10:00Z",
+  "2023-07-15T06:20:00Z",
   "2023-07-15T06:30:00Z",
+  "2023-07-15T06:40:00Z",
   "2023-07-15T06:50:00Z",
   "2023-07-15T07:00:00Z",
+  "2023-07-15T07:10:00Z",
+  "2023-07-15T07:20:00Z",
+  "2023-07-15T07:30:00Z",
+  "2023-07-15T07:40:00Z",
+  "2023-07-15T07:50:00Z",
+  "2023-07-15T08:00:00Z",
+  "2023-07-15T08:10:00Z",
+  "2023-07-15T08:20:00Z",
   "2023-07-15T08:30:00Z",
+  "2023-07-15T08:40:00Z",
   "2023-07-15T08:50:00Z",
   "2023-07-15T09:00:00Z",
 ] as const;
 
-function points(values: readonly [number, number, number, number, number, number]): SeedPoint[] {
+function points(values: readonly number[]): SeedPoint[] {
+  if (values.length !== TIMESTAMPS.length) {
+    throw new Error(`시드 값 개수(${values.length})가 TIMESTAMPS 개수(${TIMESTAMPS.length})와 다릅니다.`);
+  }
   return TIMESTAMPS.map((iso, i) => ({ at: new Date(iso), value: values[i]! }));
 }
 
 export const GAUGE_READINGS: readonly GaugeReadingSeed[] = [
-  { gaugeId: "gasan-gyo", points: points([3.93, 3.95, 3.96, 4.04, 4.06, 4.07]) },
-  { gaugeId: "bantan-gyo", points: points([3.41, 3.41, 3.39, 3.45, 3.43, 3.51]) },
-  { gaugeId: "palgyeol-gyo", points: points([7.8, 7.84, 7.87, 8.09, 8.06, 8.07]) },
-  { gaugeId: "mihocheon-gyo", points: points([9.2, 9.38, 9.47, 10.01, 10.05, 10.06]) },
-  { gaugeId: "heungdeok-gyo", points: points([5.4, 5.27, 5.2, 4.79, 4.74, 4.68]) },
-  { gaugeId: "hwanhui-gyo", points: points([4.96, 4.9, 4.88, 4.87, 5.01, 5.03]) },
-  { gaugeId: "sangjocheon-gyo", points: points([3.89, 3.91, 3.95, 4.04, 4.03, 4.05]) },
+  {
+    gaugeId: "gasan-gyo",
+    points: points([
+      3.89, 3.91, 3.92, 3.93, 3.95, 3.95, 3.96, 3.96, 3.97, 3.99, 4.0, 4.01, 4.02, 4.03, 4.04, 4.04, 4.06, 4.06, 4.07,
+    ]),
+  },
+  {
+    gaugeId: "bantan-gyo",
+    points: points([
+      3.39, 3.36, 3.46, 3.41, 3.42, 3.41, 3.39, 3.39, 3.43, 3.43, 3.4, 3.47, 3.45, 3.45, 3.4, 3.45, 3.41, 3.43, 3.51,
+    ]),
+  },
+  {
+    gaugeId: "palgyeol-gyo",
+    points: points([
+      7.75, 7.74, 7.72, 7.8, 7.8, 7.84, 7.87, 7.9, 7.91, 7.96, 7.97, 7.99, 8.04, 7.99, 8.03, 8.09, 8.07, 8.06, 8.07,
+    ]),
+  },
+  {
+    gaugeId: "mihocheon-gyo",
+    points: points([
+      8.91, 9.01, 9.1, 9.2, 9.3, 9.38, 9.47, 9.56, 9.64, 9.72, 9.79, 9.85, 9.91, 9.96, 9.99, 10.01, 10.03, 10.05,
+      10.06,
+    ]),
+  },
+  {
+    gaugeId: "heungdeok-gyo",
+    points: points([
+      5.45, 5.47, 5.46, 5.4, 5.33, 5.27, 5.2, 5.14, 5.11, 5.06, 5.03, 4.98, 4.94, 4.89, 4.84, 4.79, 4.78, 4.74, 4.68,
+    ]),
+  },
+  {
+    gaugeId: "hwanhui-gyo",
+    points: points([
+      4.74, 4.79, 4.9, 4.96, 4.92, 4.9, 4.88, 5.01, 4.95, 4.99, 5.06, 5.05, 5.07, 5.02, 5.04, 4.87, 4.91, 5.01, 5.03,
+    ]),
+  },
+  {
+    gaugeId: "sangjocheon-gyo",
+    points: points([
+      3.89, 3.9, 3.89, 3.89, 3.88, 3.91, 3.95, 3.9, 4.04, 3.95, 4.02, 3.9, 3.96, 3.96, 3.96, 4.04, 4.01, 4.03, 4.05,
+    ]),
+  },
 ];
