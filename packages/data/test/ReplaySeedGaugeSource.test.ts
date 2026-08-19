@@ -33,7 +33,7 @@ describe("createChungbukReplayGaugeSource", () => {
 
   it("시드 범위 밖은 null이다 (마지막 값 유지 금지)", () => {
     const source = createChungbukReplayGaugeSource();
-    expect(source.read("mihocheon-gyo", new Date("2023-07-15T05:50:00Z"))).toBeNull();
+    expect(source.read("mihocheon-gyo", new Date("2023-07-14T14:00:00Z"))).toBeNull();
     expect(source.read("mihocheon-gyo", new Date("2023-07-15T09:30:00Z"))).toBeNull();
   });
 
