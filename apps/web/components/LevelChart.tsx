@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { SimulationSnapshot, SimulationStore } from "../lib/simulationStore";
 import { buildLevelSegments } from "../lib/levelSeries";
 import { formatLevel, formatShortClock } from "../lib/format";
+import { GAUGES } from "@chungbuk/data";
 
 interface LevelChartProps {
   snapshot: SimulationSnapshot;
@@ -71,12 +72,13 @@ export function LevelChart({ snapshot, store }: LevelChartProps) {
   }
 
   const hoverReading = hoverAt ? store.getGaugeSource().read(site.gaugeId, hoverAt) : null;
+  const gaugeName = GAUGES.find((g) => g.id === site.gaugeId)?.name ?? site.gaugeId;
 
   return (
     <section className="panel">
       <div className="panel-header">
         <span>
-          {site.name} 수위 그래프 <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>· {site.gaugeId}</span>
+          {site.name} 수위 그래프 <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>· {gaugeName}</span>
         </span>
         <span style={{ fontWeight: 400, fontSize: 11, color: "var(--text-muted)" }}>실선 실측 · 점선 보간</span>
       </div>

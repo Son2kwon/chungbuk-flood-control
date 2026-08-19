@@ -16,6 +16,14 @@ const HEIGHT = 520;
 const PADDING = 60;
 /** 위도·경도 스팬에 여백으로 얹는 비율 — 마커/라벨이 도형 가장자리에 바로 붙지 않도록 한다. */
 const SPAN_MARGIN_RATIO = 0.18;
+/**
+ * 같은 관측소를 지배 관측소로 공유하는 시설이 2개 이상이면, 실좌표 투영만으로는 화면상
+ * 겹친다 — 예: 팔결 세월교/팔결지하차도는 실제로 300m 안팎 떨어져 있지만, 지도가 5개
+ * 지점 전체(약 10~13km 스팬)를 담아야 해서 300m는 화면상 10px 안팎으로 짓눌린다.
+ * 그래서 이 시설들은 실좌표 대신, 공유 클러스터 중심에서 360/n도 간격으로 흩뿌린 화면
+ * 좌표에 그린다 — 실좌표는 거리 표시 등 다른 계산에 그대로 쓰고, 마커 배치에만 쓰지 않는다.
+ */
+const CLUSTER_RADIUS_PX = 34;
 
 const LEGEND_STATES: AlertState[] = [
   "MONITORING",
@@ -82,11 +90,42 @@ export function SiteMap({ snapshot, store }: SiteMapProps) {
   }
 
   const gaugePoint = governingGauge ? project(governingGauge.lat, governingGauge.lng) : null;
-  const sitePoint = governingSite ? project(governingSite.lat, governingSite.lng) : null;
   const governingDistanceM =
     governingGauge && governingSite
       ? haversineMeters(governingGauge.lat, governingGauge.lng, governingSite.lat, governingSite.lng)
       : null;
+
+  // 같은 gaugeId를 가진 시설끼리 그룹을 묶는다 — 배열 순서가 곧 각도 분산 순서다.
+  const gaugeGroups = new Map<string, string[]>();
+  for (const site of snapshot.sites) {
+    const group = gaugeGroups.get(site.gaugeId) ?? [];
+    group.push(site.id);
+    gaugeGroups.set(site.gaugeId, group);
+  }
+
+  // 클러스터(공유 관측소)마다 실좌표 투영들의 평균점을 중심으로 삼는다.
+  const clusterCenters = new Map<string, [number, number]>();
+  for (const [gaugeId, siteIds] of gaugeGroups) {
+    if (siteIds.length <= 1) continue;
+    const points = siteIds.map((id) => {
+      const s = snapshot.sites.find((site) => site.id === id)!;
+      return project(s.lat, s.lng);
+    });
+    const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length;
+    const cy = points.reduce((sum, p) => sum + p[1], 0) / points.length;
+    clusterCenters.set(gaugeId, [cx, cy]);
+  }
+
+  function markerPoint(site: (typeof snapshot.sites)[number]): [number, number] {
+    const group = gaugeGroups.get(site.gaugeId)!;
+    if (group.length <= 1) return project(site.lat, site.lng);
+    const [cx, cy] = clusterCenters.get(site.gaugeId)!;
+    const idx = group.indexOf(site.id);
+    const angle = (2 * Math.PI * idx) / group.length - Math.PI / 2;
+    return [cx + CLUSTER_RADIUS_PX * Math.cos(angle), cy + CLUSTER_RADIUS_PX * Math.sin(angle)];
+  }
+
+  const sitePoint = governingSite ? markerPoint(governingSite) : null;
 
   return (
     <section className="panel">
@@ -109,8 +148,18 @@ export function SiteMap({ snapshot, store }: SiteMapProps) {
                 strokeDasharray="4 3"
               />
               {/* 두 지점이 실제로 1.4km 거리라 화면상 아주 가깝다 — 라벨을 중점에 그대로
-                  얹으면 마커·이름표와 겹친다. 두 지점에서 떨어진 여백 쪽으로 옮겨 쓴다. */}
-              <text x={sitePoint[0] + 45} y={sitePoint[1] + 40} fontSize={10} fill="var(--text-secondary)">
+                  얹으면 마커·이름표와 겹친다. 두 지점에서 떨어진 여백 쪽으로 옮겨 쓰고,
+                  halo(배경 스트로크)로 다른 요소와 겹쳐도 읽히게 한다. */}
+              <text
+                x={sitePoint[0] + 45}
+                y={sitePoint[1] + 40}
+                fontSize={10}
+                fill="var(--text-secondary)"
+                paintOrder="stroke"
+                stroke="var(--surface-1)"
+                strokeWidth={4}
+                strokeLinejoin="round"
+              >
                 <tspan x={sitePoint[0] + 45} dy={0}>
                   {governingGauge!.name} → {governingSite!.name}
                 </tspan>
@@ -124,7 +173,8 @@ export function SiteMap({ snapshot, store }: SiteMapProps) {
 
           {/* 관측소 마커에는 별도 이름표를 달지 않는다 — 궁평2지하차도와 실제 거리가 1.4km라
               화면상 아주 가까워서, 이름표를 얹으면 시설 쪽 이름/상태 라벨과 겹친다. 어느
-              관측소인지는 아래 연결선 라벨("미호천교 → 궁평2지하차도")이 이미 말해준다. */}
+              관측소인지는 연결선 라벨("미호천교 → 궁평2지하차도")과 아래 범례("관측소")가
+              말해준다. 회색 사각형이라 원형 시설 마커와는 모양으로도 구분된다. */}
           {gaugePoint && governingGauge && (
             <rect
               x={gaugePoint[0] - 6}
@@ -134,11 +184,13 @@ export function SiteMap({ snapshot, store }: SiteMapProps) {
               fill="var(--text-muted)"
               stroke="var(--surface-1)"
               strokeWidth={1.5}
+              role="img"
+              aria-label={`${governingGauge.name} (관측소)`}
             />
           )}
 
           {snapshot.sites.map((site) => {
-            const [x, y] = project(site.lat, site.lng);
+            const [x, y] = markerPoint(site);
             const style = STATE_STYLES[site.state];
             const selected = site.id === snapshot.selectedSiteId;
             const isExample = site.coordinateSource === "example";
@@ -160,10 +212,31 @@ export function SiteMap({ snapshot, store }: SiteMapProps) {
                 ) : (
                   <circle r={10} fill={`var(${style.var})`} stroke="var(--surface-1)" strokeWidth={2} />
                 )}
-                <text y={-16} textAnchor="middle" fontSize={12} fontWeight={700} fill="var(--text-primary)">
+                {/* paintOrder로 배경 스트로크(halo)를 먼저 그려, 뒤에 지나는 연결선·관측소
+                    마커가 있어도 글자가 끊겨 보이지 않게 한다. */}
+                <text
+                  y={-16}
+                  textAnchor="middle"
+                  fontSize={12}
+                  fontWeight={700}
+                  fill="var(--text-primary)"
+                  paintOrder="stroke"
+                  stroke="var(--surface-1)"
+                  strokeWidth={4}
+                  strokeLinejoin="round"
+                >
                   {site.name}
                 </text>
-                <text y={26} textAnchor="middle" fontSize={10} fill="var(--text-muted)">
+                <text
+                  y={26}
+                  textAnchor="middle"
+                  fontSize={10}
+                  fill="var(--text-muted)"
+                  paintOrder="stroke"
+                  stroke="var(--surface-1)"
+                  strokeWidth={4}
+                  strokeLinejoin="round"
+                >
                   {style.label}
                 </text>
               </g>
@@ -181,6 +254,10 @@ export function SiteMap({ snapshot, store }: SiteMapProps) {
           <li className="state-badge">
             <span className="map-legend-example-dot" />
             예시 지점(실제 통제 대상 확정 전)
+          </li>
+          <li className="state-badge">
+            <span className="map-legend-gauge-square" />
+            관측소(홍수특보 지점)
           </li>
         </ul>
       </div>
@@ -201,6 +278,12 @@ export function SiteMap({ snapshot, store }: SiteMapProps) {
           border-radius: 999px;
           flex-shrink: 0;
           border: 1.5px dashed var(--text-muted);
+        }
+        .map-legend-gauge-square {
+          width: 9px;
+          height: 9px;
+          flex-shrink: 0;
+          background: var(--text-muted);
         }
       `}</style>
     </section>
