@@ -8,6 +8,8 @@ export interface IncidentTimelineEntry {
 }
 
 export const OSONG_INCIDENT_TIMELINE: readonly IncidentTimelineEntry[] = [
+  { at: new Date("2023-07-14T17:20:00Z"), label: "금강홍수통제소 홍수주의보 발령 (미호천교)" },
+  { at: new Date("2023-07-15T04:10:00Z"), label: "홍수경보 상향 (미호천교)" },
   { at: new Date("2023-07-15T07:01:00Z"), label: "현장 감리단장 1차 신고 (제방 월류 우려)" },
   { at: new Date("2023-07-15T07:56:00Z"), label: "2차 신고 (지하차도 통제 요청)" },
   { at: new Date("2023-07-15T08:30:00Z"), label: "궁평2지하차도 침수 발생" },

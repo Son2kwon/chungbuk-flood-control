@@ -20,9 +20,19 @@ export interface LevelSegment {
  *
  * 값 자체는 항상 gaugeSource.read()로 조회한다 — 시드 배열의 값을 직접 베끼지 않고,
  * 도메인이 실제로 돌려주는 값(source of truth)을 신뢰한다.
+ *
+ * GAUGE_READINGS는 이제 여러 시나리오가 공유하는 17시간짜리 원본이라, 현재 재생 구간
+ * [windowStart, windowEnd] 밖의 관측점은 반드시 걸러내야 한다 — 안 그러면 다른 시나리오
+ * 구간의 값(예: 전날 최저 수위)까지 Y축 자동 스케일과 선 경로에 섞여 들어간다.
  */
-export function buildLevelSegments(gaugeSource: GaugeSource, gaugeId: string): LevelSegment[] {
-  const raw = GAUGE_READINGS.find((g) => g.gaugeId === gaugeId)?.points ?? [];
+export function buildLevelSegments(
+  gaugeSource: GaugeSource,
+  gaugeId: string,
+  windowStart: Date,
+  windowEnd: Date,
+): LevelSegment[] {
+  const all = GAUGE_READINGS.find((g) => g.gaugeId === gaugeId)?.points ?? [];
+  const raw = all.filter((p) => p.at.getTime() >= windowStart.getTime() && p.at.getTime() <= windowEnd.getTime());
   if (raw.length === 0) return [];
 
   const sorted = [...raw].sort((a, b) => a.at.getTime() - b.at.getTime());

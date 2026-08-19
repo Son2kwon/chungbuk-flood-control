@@ -29,8 +29,8 @@ export function LevelChart({ snapshot, store }: LevelChartProps) {
 
   const segments = useMemo(() => {
     if (!site) return [];
-    return buildLevelSegments(store.getGaugeSource(), site.gaugeId);
-  }, [store, site]);
+    return buildLevelSegments(store.getGaugeSource(), site.gaugeId, snapshot.seedStart, snapshot.seedEnd);
+  }, [store, site, snapshot.seedStart, snapshot.seedEnd]);
 
   if (!site) {
     return (
@@ -80,7 +80,9 @@ export function LevelChart({ snapshot, store }: LevelChartProps) {
         <span>
           {site.name} 수위 그래프 <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>· {gaugeName}</span>
         </span>
-        <span style={{ fontWeight: 400, fontSize: 11, color: "var(--text-muted)" }}>실선 실측 · 점선 보간</span>
+        <span style={{ fontWeight: 400, fontSize: 11, color: "var(--text-muted)" }}>
+          실선 실측 · 점선 보간(관측 간격이 넓은 구간)
+        </span>
       </div>
       <div className="scroll-body" style={{ alignItems: "center" }}>
         <svg

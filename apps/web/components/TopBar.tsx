@@ -25,12 +25,30 @@ export function TopBar({ snapshot, store }: TopBarProps) {
     store.seek(new Date(ms));
   }
 
+  function handleScenarioChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    store.switchScenario(e.target.value);
+  }
+
   return (
     <header className="topbar">
       <div className="topbar-clock">
         <span className="topbar-date">{formatDate(snapshot.now)}</span>
         <span className="topbar-time tabular">{formatClock(snapshot.now)}</span>
         <span className="topbar-badge">가상 시각</span>
+      </div>
+
+      <div className="topbar-scenario">
+        <label className="topbar-scenario-label" htmlFor="scenario-select">
+          시나리오
+        </label>
+        <select id="scenario-select" value={snapshot.scenario.id} onChange={handleScenarioChange}>
+          {snapshot.scenarios.map((scenario) => (
+            <option key={scenario.id} value={scenario.id}>
+              {scenario.label}
+            </option>
+          ))}
+        </select>
+        <span className="topbar-scenario-desc">{snapshot.scenario.description}</span>
       </div>
 
       <div className="topbar-controls">
@@ -102,6 +120,32 @@ export function TopBar({ snapshot, store }: TopBarProps) {
           border: 1px solid var(--border);
           border-radius: 3px;
           padding: 1px 5px;
+        }
+        .topbar-scenario {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          min-width: 200px;
+        }
+        .topbar-scenario-label {
+          font-size: 11px;
+          color: var(--text-muted);
+          white-space: nowrap;
+        }
+        .topbar-scenario select {
+          font-size: 12px;
+          padding: 3px 6px;
+          border: 1px solid var(--border);
+          border-radius: 4px;
+          background: var(--surface-1);
+          color: var(--text-primary);
+        }
+        .topbar-scenario-desc {
+          font-size: 11px;
+          color: var(--text-muted);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         .topbar-controls {
           display: flex;

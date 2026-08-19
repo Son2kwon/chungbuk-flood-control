@@ -1,5 +1,13 @@
 import type { AlertState, ControlOrderEngine, Severity, StateTransitionEvent } from "@chungbuk/domain";
-import { OSONG_INCIDENT_TIMELINE, type IncidentTimelineEntry, type SiteType } from "@chungbuk/data";
+import {
+  DEFAULT_SCENARIO_ID,
+  OSONG_INCIDENT_TIMELINE,
+  SCENARIOS,
+  findScenario,
+  type IncidentTimelineEntry,
+  type Scenario,
+  type SiteType,
+} from "@chungbuk/data";
 import { createCompositionRoot, type CompositionRoot } from "./composition-root";
 import { buildNotification, type NotificationRecord } from "./notifications";
 
@@ -55,6 +63,9 @@ export interface SimulationSnapshot {
   /** alertId → 지점명. events에는 지점명이 없어 화면에서 조인할 때 쓴다. */
   siteNameByAlertId: Readonly<Record<string, string>>;
   notifications: readonly NotificationRecord[];
+  /** 현재 재생 중인 시나리오와 선택 가능한 전체 목록 (상단 시나리오 드롭다운용). */
+  scenario: Scenario;
+  scenarios: readonly Scenario[];
 }
 
 type Listener = () => void;
@@ -74,7 +85,7 @@ export class SimulationStore {
   private notificationSeq = 0;
 
   constructor() {
-    this.root = createCompositionRoot();
+    this.root = createCompositionRoot(DEFAULT_SCENARIO_ID);
     this.selectedSiteId = this.root.sites[0]!.id;
     this.snapshot = this.buildSnapshot();
   }
@@ -147,6 +158,11 @@ export class SimulationStore {
       speed: this.root.replayClock.speed as SpeedOption,
       sites,
       selectedSiteId: this.selectedSiteId,
+      // 하한 없이 now까지 지난 사건을 전부 보여준다 — 시나리오 시작 시각보다 이전에 일어난
+      // 실제 사건(예: 경보 시나리오는 06:30부터라 그 이전의 주의보 발령·경보 상향을 이미
+      // 지나쳐 시작한다)은 "재생 시작과 동시에 이미 벌어진 배경 사실"로 곧장 보여주는 게
+      // 맞다 — 반대로 아직 오지 않은 사건(예: 주의보 시나리오 구간에는 07:01 신고가 없다)은
+      // now가 그 시각에 못 미치므로 자연히 뜨지 않는다. 시나리오마다 별도 하한이 필요 없다.
       reachedIncidents: OSONG_INCIDENT_TIMELINE.filter(
         (entry) => entry.at.getTime() <= now.getTime() && !this.dismissedIncidents.has(entry.label),
       ),
@@ -154,6 +170,8 @@ export class SimulationStore {
       events: allEvents,
       siteNameByAlertId: Object.fromEntries(this.alertIdToSiteName),
       notifications: [...this.notifications],
+      scenario: findScenario(this.root.scenarioId),
+      scenarios: SCENARIOS,
     };
   }
 
@@ -200,8 +218,19 @@ export class SimulationStore {
     this.notify();
   };
 
+  /** 초기화 — 현재 재생 중인 시나리오는 그대로 두고 그 시나리오의 시작 시각으로 되돌린다. */
   reset = (): void => {
-    this.root = createCompositionRoot();
+    this.rebuildRoot(this.root.scenarioId);
+  };
+
+  /** 시나리오 전환 — 엔진과 이벤트 로그를 완전히 새로 만든다. 이전 시나리오의 흔적이 남지 않는다. */
+  switchScenario = (scenarioId: string): void => {
+    if (scenarioId === this.root.scenarioId) return;
+    this.rebuildRoot(scenarioId);
+  };
+
+  private rebuildRoot(scenarioId: string): void {
+    this.root = createCompositionRoot(scenarioId);
     this.isPlaying = false;
     this.lastFrameAt = null;
     this.selectedSiteId = this.root.sites[0]!.id;
@@ -212,7 +241,7 @@ export class SimulationStore {
     this.notifications = [];
     this.notificationSeq = 0;
     this.notify();
-  };
+  }
 
   /** 앞으로만 이동할 수 있다 — 되돌리기는 초기화(reset)로만 가능하다 (도메인의 단조 시간 불변식). */
   seek = (target: Date): void => {
