@@ -18,6 +18,8 @@ export interface SiteSnapshot {
   type: SiteType;
   lat: number;
   lng: number;
+  /** "verified"(실측) | "example"(예시 지점, 실제 통제 대상 목록 확정 전). 지도 마커 스타일 구분용. */
+  coordinateSource: "verified" | "example";
   gaugeId: string;
   state: AlertState;
   severity: Severity | null;
@@ -117,6 +119,7 @@ export class SimulationStore {
         type: site.type,
         lat: site.lat,
         lng: site.lng,
+        coordinateSource: site.coordinateSource,
         gaugeId: site.gaugeId,
         state: engine.state,
         severity: engine.severity,

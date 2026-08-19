@@ -2,6 +2,10 @@ export interface GaugeSeed {
   id: string;
   name: string;
   river: string;
+  /** 실측 좌표. 팔결교/미호천교/흥덕교/환희교 4곳만 실측이고, 나머지 3곳은 청주 지도
+   * 범위 밖(진천/증평/세종)이라 개략 위치다 — 각 항목의 TODO 주석 참고. */
+  lat: number;
+  lng: number;
   warnLevel: number;
   alertLevel: number;
   /**
@@ -25,6 +29,9 @@ export const GAUGES: readonly GaugeSeed[] = [
     id: "gasan-gyo",
     name: "가산교",
     river: "미호강",
+    // TODO: 지도 범위 밖(진천군), 개략 위치(실측 아님) — 진천군청 인근 대략 좌표.
+    lat: 36.8556,
+    lng: 127.4358,
     warnLevel: 3.9,
     alertLevel: 4.5,
     designFloodLevel: 5.5, // TODO: 임시값(alertLevel+1.0m). 실측 환산표로 교체.
@@ -34,6 +41,9 @@ export const GAUGES: readonly GaugeSeed[] = [
     id: "bantan-gyo",
     name: "반탄교",
     river: "미호강",
+    // TODO: 지도 범위 밖(증평군), 개략 위치(실측 아님) — 증평군청 인근 대략 좌표.
+    lat: 36.7852,
+    lng: 127.5811,
     warnLevel: 3.0,
     alertLevel: 3.5,
     designFloodLevel: 4.5, // TODO: 임시값(alertLevel+1.0m). 실측 환산표로 교체.
@@ -43,6 +53,8 @@ export const GAUGES: readonly GaugeSeed[] = [
     id: "palgyeol-gyo",
     name: "팔결교",
     river: "미호강",
+    lat: 36.709872, // 실측
+    lng: 127.468925,
     warnLevel: 5.0,
     alertLevel: 6.0,
     // TODO: 임시값(alertLevel+2.0m), 실측 계획홍수위 확인 필요. +1.0m였을 때는 시드 관측값이
@@ -56,6 +68,8 @@ export const GAUGES: readonly GaugeSeed[] = [
     id: "mihocheon-gyo",
     name: "미호천교",
     river: "미호강",
+    lat: 36.616789, // 실측
+    lng: 127.359697,
     warnLevel: 7.0,
     alertLevel: 8.0,
     // 확정값. 06:40 실측 관측값이 9.30이고, 국무조정실 발표상 06:40이 계획홍수위 도달
@@ -68,6 +82,8 @@ export const GAUGES: readonly GaugeSeed[] = [
     id: "heungdeok-gyo",
     name: "흥덕교",
     river: "미호강",
+    lat: 36.646159, // 실측
+    lng: 127.481060,
     warnLevel: 4.0,
     alertLevel: 5.0,
     designFloodLevel: 6.0, // TODO: 임시값(alertLevel+1.0m). 실측 환산표로 교체.
@@ -77,6 +93,8 @@ export const GAUGES: readonly GaugeSeed[] = [
     id: "hwanhui-gyo",
     name: "환희교",
     river: "미호강",
+    lat: 36.668597, // 실측
+    lng: 127.341170,
     warnLevel: 3.6,
     alertLevel: 4.5,
     designFloodLevel: 5.5, // TODO: 임시값(alertLevel+1.0m). 실측 환산표로 교체.
@@ -86,6 +104,9 @@ export const GAUGES: readonly GaugeSeed[] = [
     id: "sangjocheon-gyo",
     name: "상조천교",
     river: "미호강",
+    // TODO: 지도 범위 밖(세종시), 개략 위치(실측 아님) — 세종시 북부 대략 좌표.
+    lat: 36.4800,
+    lng: 127.2890,
     warnLevel: 2.5,
     alertLevel: 3.5,
     designFloodLevel: 4.5, // TODO: 임시값(alertLevel+1.0m). 실측 환산표로 교체.
