@@ -495,3 +495,88 @@ describe("시나리오 E: 확인은 alert가 아니라 assignment(그 순간 담
     expect(ackStatusFor(events, climbEvent)).toBe("확인했으나 미조치");
   });
 });
+
+describe("시나리오 F: 주의보 단계 라이프사이클 (07-14 실측, WARN 등급)", () => {
+  // 미호천교 07-14 18:00~21:30 실측(packages/data/src/seed/readings.ts와 동일 값).
+  // 18:50 실측 7.00m — 주의보 기준 최초 도달(발령 17:20보다 90분 늦음). 20:50 이후 수위가
+  // 주의보 미만으로 내려가 RELEASE_PENDING까지 자연스럽게 이어진다 — apps/web의
+  // "주의보 단계" 시나리오(packages/data/src/seed/scenarios.ts)와 동일 구간·값이다.
+  const WARN_TIMES = ["18:00", "18:30", "18:50", "19:00", "19:30", "19:50", "20:00", "20:30", "20:50", "21:00", "21:30"] as const;
+  const WARN_VALUES = [6.93, 6.98, 7.0, 7.02, 7.03, 7.04, 7.03, 7.01, 6.99, 6.97, 6.92] as const;
+  const WARN_POINTS: SeedPoint[] = WARN_TIMES.map((t, i) => ({
+    at: new Date(`2023-07-14T${t}:00Z`),
+    value: WARN_VALUES[i]!,
+  }));
+  const WARN_SITE: SiteConfig = { ...SITE, id: "miho-bridge-warn-stage", gaugeId: "warn-stage-gauge" };
+
+  it("18:50 WARN 진입 → 무응답 T1(30분) 재배정 → 승인·현장완료(CONTROLLED) → 저수위 30분 지속 → RELEASE_PENDING → 해제 승인(MONITORING)", () => {
+    const start = WARN_POINTS[0]!.at;
+    const end = WARN_POINTS[WARN_POINTS.length - 1]!.at;
+    const source = new ReplaySource([{ gaugeId: WARN_SITE.gaugeId, points: WARN_POINTS }]);
+    const clock = new ReplayClock({ start, end });
+    const scheduler = new VirtualScheduler(clock);
+    const eventLog = new InMemoryEventLog();
+    const engine = new ControlOrderEngine({ site: WARN_SITE, gaugeSource: source, clock, scheduler, eventLog });
+    engine.attach(clock);
+
+    // 18:50: 7.00m는 WARN(주의보) — DIRECTED가 아니라 RECOMMENDED(승인 대기)로 진입한다.
+    clock.seek(new Date("2023-07-14T18:50:00Z"));
+    expect(engine.state).toBe("RECOMMENDED");
+    expect(engine.severity).toBe("WARN");
+    expect(engine.ladderStep).toBe(0); // 담당 공무원
+    expect(engine.deadlineAt).toEqual(new Date("2023-07-14T19:20:00Z")); // T1 30분
+
+    // 19:20: 담당 공무원 무응답 → T1 재배정. 승인/기각 없이도 상태는 여전히 RECOMMENDED다.
+    clock.seek(new Date("2023-07-14T19:20:00Z"));
+    expect(engine.state).toBe("RECOMMENDED");
+    expect(engine.ladderStep).toBe(1); // 팀장
+    expect(engine.deadlineAt).toEqual(new Date("2023-07-14T19:50:00Z")); // T1 재예약
+
+    // 19:25: 팀장이 승인 → DIRECTED (재량 승인, 사다리 단계는 그대로).
+    clock.seek(new Date("2023-07-14T19:25:00Z"));
+    engine.approve("팀장", clock.now());
+    expect(engine.state).toBe("DIRECTED");
+    expect(engine.ladderStep).toBe(1);
+    expect(engine.deadlineAt).toEqual(new Date("2023-07-14T19:55:00Z")); // T2(WARN)=30분
+
+    // 19:30: 현장완료 보고 → CONTROLLED.
+    clock.seek(new Date("2023-07-14T19:30:00Z"));
+    engine.reportFieldComplete("현장 대응팀", clock.now());
+    expect(engine.state).toBe("CONTROLLED");
+    expect(engine.deadlineAt).toBeNull();
+
+    // 20:41: 20:30(7.01)→20:50(6.99) 사이 보간으로 실제 하한 통과 시각(20:40, 정확히
+    // 7.00이라 <에는 미달)보다 1분 뒤 게이지 폴링에서 주의보 미만이 처음 관측된다.
+    clock.seek(new Date("2023-07-14T20:41:00Z"));
+    expect(engine.state).toBe("CONTROLLED"); // 아직 30분 미지속
+
+    // 21:11: 20:41부터 30분 지속 → RELEASE_PENDING. 사다리는 처음부터(담당 공무원) 다시 시작.
+    clock.seek(new Date("2023-07-14T21:11:00Z"));
+    expect(engine.state).toBe("RELEASE_PENDING");
+    expect(engine.ladderStep).toBe(0);
+    expect(engine.deadlineAt).toEqual(new Date("2023-07-14T22:11:00Z")); // T3 60분
+
+    // 21:20: 해제 승인 → MONITORING, 주문(alertId) 종료.
+    clock.seek(new Date("2023-07-14T21:20:00Z"));
+    engine.approveRelease("상황실 운영자", clock.now());
+    expect(engine.state).toBe("MONITORING");
+    expect(engine.severity).toBeNull();
+    expect(engine.alertId).toBeNull();
+
+    // 21:30 시나리오 범위 끝까지 MONITORING을 유지한다.
+    clock.seek(end);
+    expect(engine.state).toBe("MONITORING");
+
+    const events = eventLog.all();
+    expect(events.map((e) => ({ at: e.occurredAt, from: e.fromState, to: e.toState }))).toEqual([
+      { at: new Date("2023-07-14T18:50:00Z"), from: "MONITORING", to: "RECOMMENDED" },
+      { at: new Date("2023-07-14T19:20:00Z"), from: "RECOMMENDED", to: "RECOMMENDED" },
+      { at: new Date("2023-07-14T19:25:00Z"), from: "RECOMMENDED", to: "DIRECTED" },
+      { at: new Date("2023-07-14T19:30:00Z"), from: "DIRECTED", to: "CONTROLLED" },
+      { at: new Date("2023-07-14T21:11:00Z"), from: "CONTROLLED", to: "RELEASE_PENDING" },
+      { at: new Date("2023-07-14T21:20:00Z"), from: "RELEASE_PENDING", to: "MONITORING" },
+    ]);
+    expect(events[1]!.reason).toContain("무응답(담당 공무원)");
+    expect(events[4]!.reason).toContain("30분 지속");
+  });
+});
