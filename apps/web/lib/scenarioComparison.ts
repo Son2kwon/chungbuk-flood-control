@@ -6,11 +6,13 @@ import {
   type AlertState,
   type StateTransitionEvent,
 } from "@chungbuk/domain";
-import { createChungbukReplayGaugeSource, SITES } from "@chungbuk/data";
-import { buildSiteConfig, SEED_START } from "./composition-root";
+import { createChungbukReplayGaugeSource, findScenario, SITES } from "@chungbuk/data";
+import { buildSiteConfig } from "./composition-root";
 import { formatShortClock } from "./format";
 
 const SITE_ID = "gungpyeong2-underpass";
+/** 이 비교는 항상 "경보에서 참사까지" 시나리오 고정이다 — 상황실의 시나리오 선택과 무관하다. */
+const SCENARIO_START = findScenario("alert-to-disaster").start;
 /** 실제 유입 시각(국무조정실 발표). 시나리오 A/B 최종 상태를 이 시점 기준으로 대비시킨다. */
 const FLOOD_AT = new Date("2023-07-15T08:27:00Z");
 
@@ -43,7 +45,7 @@ function runScenario(respond: boolean): ScenarioResult {
 
   const siteConfig = buildSiteConfig(site);
   const gaugeSource = createChungbukReplayGaugeSource();
-  const clock = new ReplayClock({ start: SEED_START, end: FLOOD_AT });
+  const clock = new ReplayClock({ start: SCENARIO_START, end: FLOOD_AT });
   const scheduler = new VirtualScheduler(clock);
   const eventLog = new InMemoryEventLog();
   const engine = new ControlOrderEngine({ site: siteConfig, gaugeSource, clock, scheduler, eventLog });

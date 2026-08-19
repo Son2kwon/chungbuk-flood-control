@@ -8,17 +8,15 @@ import {
   type GaugeSource,
   type SiteConfig,
 } from "@chungbuk/domain";
-import { createChungbukReplayGaugeSource, GAUGES, SITES, USERS, type SiteSeed } from "@chungbuk/data";
-
-/**
- * 리플레이 재생이 시작되는 시각. GAUGE_READINGS의 데이터 범위(06:00~09:00)와는 다르다 —
- * 데이터는 06:00부터 있지만, 재생은 06:30부터 시작한다. 06:00부터 재생하면 06:15/06:30에
- * ALERT 사다리가 이미 최상단까지 재배정돼서, 06:40 DESIGN_FLOOD 승격이 사다리를 점프시키는
- * 장면 자체가 사라진다("이미 꼭대기라 오를 곳이 없다"). 06:30 시작이면 06:40 승격이 실제로
- * 팀장→과장으로 사다리를 점프시키고, FORCED도 07:00에 걸려 07:01 신고 타임라인과 대비된다.
- */
-export const SEED_START = new Date("2023-07-15T06:30:00Z");
-export const SEED_END = new Date("2023-07-15T09:00:00Z");
+import {
+  createChungbukReplayGaugeSource,
+  DEFAULT_SCENARIO_ID,
+  findScenario,
+  GAUGES,
+  SITES,
+  USERS,
+  type SiteSeed,
+} from "@chungbuk/data";
 
 const GAUGE_BY_ID = new Map(GAUGES.map((g) => [g.id, g]));
 
@@ -60,13 +58,16 @@ export interface CompositionRoot {
   sites: readonly SiteSeed[];
   siteConfigs: ReadonlyMap<string, SiteConfig>;
   engines: ReadonlyMap<string, ControlOrderEngine>;
+  scenarioId: string;
   seedStart: Date;
   seedEnd: Date;
 }
 
-export function createCompositionRoot(): CompositionRoot {
+/** scenarioId를 생략하면 기본 시나리오("경보에서 참사까지")로 조립한다. */
+export function createCompositionRoot(scenarioId: string = DEFAULT_SCENARIO_ID): CompositionRoot {
+  const scenario = findScenario(scenarioId);
   const liveClock = new LiveClock();
-  const replayClock = new ReplayClock({ start: SEED_START, end: SEED_END, speed: 1 });
+  const replayClock = new ReplayClock({ start: scenario.start, end: scenario.end, speed: 1 });
   const scheduler = new VirtualScheduler(replayClock);
   const eventLog = new InMemoryEventLog();
   const gaugeSource = createChungbukReplayGaugeSource();
@@ -92,7 +93,8 @@ export function createCompositionRoot(): CompositionRoot {
     sites: SITES,
     siteConfigs,
     engines,
-    seedStart: SEED_START,
-    seedEnd: SEED_END,
+    scenarioId: scenario.id,
+    seedStart: scenario.start,
+    seedEnd: scenario.end,
   };
 }
